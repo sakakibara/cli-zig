@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-12
+
 ### Added
 
 - Arbitrary-depth subcommand nesting: dispatch, `help <cmd> <sub> ...`, and
@@ -107,5 +109,6 @@ dispatcher, spec-driven shell completion, and a JSON schema.
   parent command with subcommands, shell completion with a dynamic resolver,
   and `__schema` emission.
 
-[Unreleased]: https://github.com/sakakibara/cli-zig/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/sakakibara/cli-zig/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/sakakibara/cli-zig/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/sakakibara/cli-zig/releases/tag/v0.1.0
