@@ -99,15 +99,19 @@ fn usageError(alloc: std.mem.Allocator, diag: ?*Diagnostic, comptime fmt: []cons
 /// comptime fields, regardless of declaration order: pass 1 claims every
 /// flag and value-option so a two-token option's value can never be stolen
 /// by `positional()`; pass 2 reads all fixed positionals; pass 3 reads the
-/// variadic tail. When `Spec` declares a variadic (`Rest`) field, a fixed
-/// positional may only resolve from a token before a lone "--": it never
-/// dips into the post-"--" tail, which belongs to the variadic exclusively,
-/// so a starved optional positional resolves to its fallback/null and a
-/// starved required one is `error.UsageError` even when post-"--" tokens
-/// exist. A `Spec` with no variadic field keeps the older behavior: a
-/// positional may still claim a post-"--" token verbatim (dash-led included),
-/// since that is the only way such a Spec can accept a dash-led positional
-/// value. A required positional with no resolved value is `error.UsageError`.
+/// variadic tail. The variadic (`Rest`) field takes every positional left
+/// over after the fixed ones, plus every post-"--" token verbatim (dash-led
+/// included); a flag-shaped token before "--" is never swallowed into it, so
+/// an unknown flag still errors instead of landing in the tail. When `Spec`
+/// declares one, a fixed positional may only resolve from a token before a
+/// lone "--": it never dips into the post-"--" tail, which belongs to the
+/// variadic exclusively, so a starved optional positional resolves to its
+/// fallback/null and a starved required one is `error.UsageError` even when
+/// post-"--" tokens exist. A `Spec` with no variadic field keeps the older
+/// behavior: a positional may still claim a post-"--" token verbatim
+/// (dash-led included), since that is the only way such a Spec can accept a
+/// dash-led positional value. A required positional with no resolved value is
+/// `error.UsageError`.
 ///
 /// The result's variadic (`rest`) slice is owned by `alloc` and outlives the
 /// Parser; its elements point into the caller's `argv`. Intended usage is an
@@ -195,7 +199,7 @@ pub fn parseInto(comptime Spec: type, alloc: std.mem.Allocator, argv: []const []
     inline for (fields) |f| {
         const info = @field(f.type, "arg_info");
         if (info.kind == .variadic) {
-            @field(result, f.name) = try p.restAfterDoubleDash();
+            @field(result, f.name) = try p.rest();
         }
     }
 
@@ -204,7 +208,7 @@ pub fn parseInto(comptime Spec: type, alloc: std.mem.Allocator, argv: []const []
         error.UsageError => return usageError(alloc, diag, "{s}", .{p.message}),
     };
 
-    // Re-own the variadic tail in `alloc`: `restAfterDoubleDash` hands back a
+    // Re-own the variadic tail in `alloc`: `rest` hands back a
     // Parser-owned array that `deinit` frees on return. Done after `finish`
     // so a failed parse never allocates it.
     inline for (fields) |f| {
@@ -413,6 +417,64 @@ test "parseInto: a Rest field still captures dash-led tokens after --" {
     try std.testing.expectEqual(@as(usize, 2), r.rest.len);
     try std.testing.expectEqualStrings("-a", r.rest[0]);
     try std.testing.expectEqualStrings("-b", r.rest[1]);
+}
+
+test "parseInto: a Rest field captures plain trailing positionals with no --" {
+    const a = std.testing.allocator;
+    const Spec = struct { files: spec.Rest(.{}) };
+    const src = Source{ .env_get = envNone, .config_get = null };
+
+    const r = try parseInto(Spec, a, &.{ "one.txt", "two.txt" }, src, null);
+    defer a.free(r.files);
+
+    try std.testing.expectEqual(@as(usize, 2), r.files.len);
+    try std.testing.expectEqualStrings("one.txt", r.files[0]);
+    try std.testing.expectEqualStrings("two.txt", r.files[1]);
+}
+
+test "parseInto: fixed positionals fill first, then the Rest field takes the plain tail" {
+    const a = std.testing.allocator;
+    const Spec = struct {
+        first: spec.Pos([]const u8, .{}),
+        rest: spec.Rest(.{}),
+    };
+    const src = Source{ .env_get = envNone, .config_get = null };
+
+    const r = try parseInto(Spec, a, &.{ "a", "b", "c" }, src, null);
+    defer a.free(r.rest);
+
+    try std.testing.expectEqualStrings("a", r.first);
+    try std.testing.expectEqual(@as(usize, 2), r.rest.len);
+    try std.testing.expectEqualStrings("b", r.rest[0]);
+    try std.testing.expectEqualStrings("c", r.rest[1]);
+}
+
+test "parseInto: a Rest field takes the plain tail and the post-- tokens together" {
+    const a = std.testing.allocator;
+    const Spec = struct {
+        flag: spec.Flag(.{}),
+        rest: spec.Rest(.{}),
+    };
+    const src = Source{ .env_get = envNone, .config_get = null };
+
+    const r = try parseInto(Spec, a, &.{ "plain", "--flag", "--", "-x" }, src, null);
+    defer a.free(r.rest);
+
+    try std.testing.expect(r.flag);
+    try std.testing.expectEqual(@as(usize, 2), r.rest.len);
+    try std.testing.expectEqualStrings("plain", r.rest[0]);
+    try std.testing.expectEqualStrings("-x", r.rest[1]);
+}
+
+test "parseInto: an unknown flag before -- errors instead of being swallowed by Rest" {
+    const a = std.testing.allocator;
+    const Spec = struct { rest: spec.Rest(.{}) };
+    const src = Source{ .env_get = envNone, .config_get = null };
+
+    try std.testing.expectError(
+        error.UsageError,
+        parseInto(Spec, a, &.{ "file.txt", "--bogus" }, src, null),
+    );
 }
 
 test "parseInto: -- is never reported as a leftover argument even with no positional or Rest field" {

@@ -37,7 +37,7 @@ const ClusterSlot = struct {
 };
 
 /// One argv element and whether some `flag`/`option`/`positional`/
-/// `restAfterDoubleDash` call has already claimed it.
+/// `rest` call has already claimed it.
 pub const Token = struct {
     raw: []const u8,
     consumed: bool = false,
@@ -54,8 +54,7 @@ pub const Parser = struct {
     tokens: []Token,
     message: []const u8 = "",
     /// Owned by the Parser (not the caller) so `deinit` can free it: the
-    /// slice `restAfterDoubleDash` hands back, retained here purely for
-    /// cleanup bookkeeping.
+    /// slice `rest` hands back, retained here purely for cleanup bookkeeping.
     passthrough: ?[]const []const u8 = null,
     /// Index of the first literal "--" token, if argv has one. A lone "--"
     /// always ends option parsing: `flag`/`option` never match at or past
@@ -221,14 +220,14 @@ pub const Parser = struct {
             if (t.consumed) continue;
 
             if (std.mem.startsWith(u8, t.raw, "--")) {
-                const rest = t.raw[2..];
-                if (std.mem.eql(u8, rest, long)) {
+                const body = t.raw[2..];
+                if (std.mem.eql(u8, body, long)) {
                     result = try self.takeFollowingValue(t, i, "--", long);
                     continue;
                 }
-                if (rest.len > long.len and rest[long.len] == '=' and std.mem.startsWith(u8, rest, long)) {
+                if (body.len > long.len and body[long.len] == '=' and std.mem.startsWith(u8, body, long)) {
                     t.consumed = true;
-                    result = rest[long.len + 1 ..];
+                    result = body[long.len + 1 ..];
                     continue;
                 }
                 continue;
@@ -283,7 +282,7 @@ pub const Parser = struct {
     /// shape (the no-variadic Spec case, where a positional is the only way
     /// to reach a post-"--" value); when false, scanning stops at "--" and a
     /// starved call returns null without touching "--" or anything past it,
-    /// leaving those tokens exclusively for `restAfterDoubleDash` (the
+    /// leaving those tokens exclusively for `rest` (the
     /// Pos+Rest case).
     pub fn positional(self: *Parser, allow_past_dashdash: bool) ?[]const u8 {
         const limit = if (allow_past_dashdash) self.tokens.len else (self.dashdash orelse self.tokens.len);
@@ -306,29 +305,51 @@ pub const Parser = struct {
         return null;
     }
 
-    /// Post-"--" tokens not already claimed, verbatim, in argv order.
-    /// Consumes "--" and each token it returns, so a later `flag`/`option`/
-    /// `positional` call never mistakes passthrough content for one of the
-    /// parser's own switches. A caller with no variadic field may still call
-    /// `positional(true)` first and let it dip past "--"; any token that
-    /// dipped is already consumed and is skipped here so the same token is
-    /// never handed to both a positional and this passthrough tail. Empty
-    /// slice when no "--" token is present. Caller does not own the returned
-    /// slice's memory beyond the Parser's lifetime.
-    pub fn restAfterDoubleDash(self: *Parser) Error![]const []const u8 {
-        const dd = self.dashdash orelse return &.{};
-        self.tokens[dd].consumed = true;
-        const tail = self.tokens[dd + 1 ..];
+    /// The variadic tail, in argv order: every plain positional left over
+    /// after the fixed ones, plus every post-"--" token verbatim (dash-led
+    /// included). Before "--", a flag-shaped token is left unclaimed so an
+    /// unknown flag still surfaces from `finish` instead of being silently
+    /// swallowed into the tail. Consumes "--" and each token it returns, so a
+    /// later `flag`/`option`/`positional` call never mistakes tail content for
+    /// one of the parser's own switches. A caller with no variadic field may
+    /// still call `positional(true)` first and let it dip past "--"; any token
+    /// that dipped is already consumed and is skipped here, so the same token
+    /// is never handed to both a positional and the tail. Caller does not own
+    /// the returned slice's memory beyond the Parser's lifetime.
+    pub fn rest(self: *Parser) Error![]const []const u8 {
         var count: usize = 0;
-        for (tail) |tok| {
-            if (!tok.consumed) count += 1;
+        for (self.tokens, 0..) |t, i| {
+            if (t.consumed) continue;
+            if (self.dashdash) |dd| {
+                if (i == dd) continue;
+                if (i > dd) {
+                    count += 1;
+                    continue;
+                }
+            }
+            if (spec.looksLikeFlag(t.raw)) continue;
+            count += 1;
         }
+
         const out = try self.alloc.alloc([]const u8, count);
         var j: usize = 0;
-        for (tail) |*tok| {
-            if (tok.consumed) continue;
-            tok.consumed = true;
-            out[j] = tok.raw;
+        for (self.tokens, 0..) |*t, i| {
+            if (t.consumed) continue;
+            if (self.dashdash) |dd| {
+                if (i == dd) {
+                    t.consumed = true;
+                    continue;
+                }
+                if (i > dd) {
+                    t.consumed = true;
+                    out[j] = t.raw;
+                    j += 1;
+                    continue;
+                }
+            }
+            if (spec.looksLikeFlag(t.raw)) continue;
+            t.consumed = true;
+            out[j] = t.raw;
             j += 1;
         }
         self.passthrough = out;
@@ -336,7 +357,7 @@ pub const Parser = struct {
     }
 
     /// Errors if any token was never consumed by `flag`/`option`/`positional`
-    /// or swallowed by `restAfterDoubleDash`. A lone "--" is never reported
+    /// or swallowed by `rest`. A lone "--" is never reported
     /// even when nothing else consumed it (a Spec with no positional or
     /// variadic field still lets "--" terminate options cleanly).
     pub fn finish(self: *Parser) Error!void {
@@ -357,7 +378,7 @@ test "parser: flags, options, positionals, passthrough, finish" {
     try std.testing.expect(try p.flag("json", null));
     try std.testing.expectEqualStrings("8080", (try p.option("port", 'p')).?);
     try std.testing.expectEqualStrings("name", p.positional(true).?);
-    const rest = try p.restAfterDoubleDash();
+    const rest = try p.rest();
     try std.testing.expectEqual(@as(usize, 2), rest.len);
     try p.finish(); // nothing left over
 }
@@ -406,7 +427,7 @@ test "parser: positional(false) refuses to dip past a lone --, leaving it and ev
     var p = try Parser.init(a, &.{ "--", "a", "b" });
     defer p.deinit();
     try std.testing.expectEqual(@as(?[]const u8, null), p.positional(false));
-    const rest = try p.restAfterDoubleDash();
+    const rest = try p.rest();
     try std.testing.expectEqual(@as(usize, 2), rest.len);
     try std.testing.expectEqualStrings("a", rest[0]);
     try std.testing.expectEqualStrings("b", rest[1]);
@@ -417,7 +438,7 @@ test "parser: positional(false) still resolves a token that appears before --" {
     var p = try Parser.init(a, &.{ "x", "--", "a" });
     defer p.deinit();
     try std.testing.expectEqualStrings("x", p.positional(false).?);
-    const rest = try p.restAfterDoubleDash();
+    const rest = try p.rest();
     try std.testing.expectEqual(@as(usize, 1), rest.len);
     try std.testing.expectEqualStrings("a", rest[0]);
 }

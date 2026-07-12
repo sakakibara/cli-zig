@@ -109,6 +109,11 @@ const greet_cmd = App.command(GreetSpec, .{
 optional one (`.optional = true`) becomes `?T`, and `Rest(...)` becomes
 `[]const []const u8` (default `&.{}`).
 
+A `Rest` field takes the positionals left over after the fixed ones, plus
+everything after a lone `--` verbatim (dash-led included) - so `cmd a b c`
+and `cmd -- -a -b` both reach it. A flag-shaped token before `--` is never
+swallowed into the tail: an unknown flag still errors.
+
 A plain (untyped) command skips `command()` entirely and builds a
 `Command` literal with its own `run` directly:
 

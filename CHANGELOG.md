@@ -6,6 +6,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- A `Rest` field now captures the plain positionals left over after the fixed
+  ones, not only the tokens after a lone `--`. `cmd <file>...` previously
+  rejected its own arguments with "unexpected argument" whenever the Spec
+  declared its tail as `Rest` and the caller passed the files directly, which
+  is the shape most variadic commands take. Post-`--` tokens are still taken
+  verbatim, dash-led ones included, and a flag-shaped token before `--` is
+  still never swallowed into the tail, so an unknown flag keeps erroring
+  instead of silently landing in the variadic.
+
 ## [0.1.1] - 2026-07-12
 
 ### Added
