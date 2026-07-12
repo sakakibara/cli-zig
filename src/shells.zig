@@ -256,27 +256,32 @@ test "emit: powershell wires __complete and registers via Register-ArgumentCompl
     try testing.expect(std.mem.indexOf(u8, s, "-CommandName myapp") != null);
 }
 
-test "emit: no shell's script contains the literal holt" {
+test "emit: the script is fully parameterized by the program name" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const alloc = arena_state.allocator();
     inline for (.{ Shell.bash, Shell.zsh, Shell.fish, Shell.powershell }) |sh| {
-        const s = try emitToString(alloc, sh, "myapp");
-        try testing.expect(std.mem.indexOf(u8, s, "holt") == null);
+        const a = try emitToString(alloc, sh, "myapp");
+        const b = try emitToString(alloc, sh, "tool2");
+        try testing.expect(std.mem.indexOf(u8, a, "myapp") != null);
+        try testing.expect(std.mem.indexOf(u8, b, "tool2") != null);
+        try testing.expect(std.mem.indexOf(u8, a, "tool2") == null);
+        try testing.expect(std.mem.indexOf(u8, b, "myapp") == null);
     }
 }
 
-test "emit: no shell's script carries holt's app-specific navigation layer" {
+test "emit: the script defines only the completion registration, no app-specific helpers" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const alloc = arena_state.allocator();
-    inline for (.{ Shell.bash, Shell.zsh, Shell.fish, Shell.powershell }) |sh| {
-        const s = try emitToString(alloc, sh, "myapp");
-        try testing.expect(std.mem.indexOf(u8, s, "fzf") == null);
-        try testing.expect(std.mem.indexOf(u8, s, "holt path") == null);
-        try testing.expect(std.mem.indexOf(u8, s, "function hi") == null);
-        try testing.expect(std.mem.indexOf(u8, s, "hir") == null);
-    }
+    const s_bash = try emitToString(alloc, .bash, "myapp");
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, s_bash, "() {"));
+    const s_zsh = try emitToString(alloc, .zsh, "myapp");
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, s_zsh, "() {"));
+    const s_fish = try emitToString(alloc, .fish, "myapp");
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, s_fish, "function "));
+    const s_ps = try emitToString(alloc, .powershell, "myapp");
+    try testing.expectEqual(@as(usize, 0), std.mem.count(u8, s_ps, "function "));
 }
 
 test "emit: bash falls back to file completion on the files directive and strips the description at the tab" {
