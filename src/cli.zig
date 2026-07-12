@@ -87,10 +87,11 @@ fn hasHelpFlag(argv: []const []const u8) bool {
 }
 
 /// Writes a usage error to `err_w`: `message`, then `usage` prefixed with
-/// "usage: " when non-empty.
-fn writeUsageError(err_w: *std.Io.Writer, message: []const u8, usage: []const u8) void {
-    err_w.print("{s}\n", .{message}) catch {};
-    if (usage.len > 0) err_w.print("usage: {s}\n", .{usage}) catch {};
+/// "usage: " when non-empty. `prefix` (an app's `cfg.messagePrefix`, or ""
+/// when absent) is prepended to both lines.
+fn writeUsageError(err_w: *std.Io.Writer, prefix: []const u8, message: []const u8, usage: []const u8) void {
+    err_w.print("{s}{s}\n", .{ prefix, message }) catch {};
+    if (usage.len > 0) err_w.print("{s}usage: {s}\n", .{ prefix, usage }) catch {};
 }
 
 /// Bounded Levenshtein edit distance; command names are short so a fixed
@@ -279,11 +280,26 @@ pub fn Cli(comptime cfg: anytype) type {
         /// `loadContext` failure; when it returns a message for a given
         /// error, `run` prints that instead of `error: <name>`. Absent it,
         /// or when it returns null for a given error, `run` falls back to
-        /// `error: <name>`.
-        pub const describe_error: ?*const fn (err: anyerror) ?[]const u8 = if (@hasField(@TypeOf(cfg), "describeError"))
+        /// `error: <name>`. The allocator handed to it is a short-lived arena
+        /// scoped to that one call, freed immediately after the message is
+        /// printed - a formatted message (`allocPrint`) never outlives the
+        /// print, and never needs the hook to free it itself.
+        pub const describe_error: ?*const fn (alloc: std.mem.Allocator, err: anyerror) ?[]const u8 = if (@hasField(@TypeOf(cfg), "describeError"))
             cfg.describeError
         else
             null;
+
+        /// An app opts into a uniform prefix on every framework-generated
+        /// stderr message by putting a `messagePrefix` on `cfg` - the same
+        /// `@hasField` gate `describeError`/`makeSource` use. When present,
+        /// it is prepended verbatim to `reportUnknownCommand`,
+        /// `reportError`, `reportLoadContextError`, and the `command()`
+        /// trampoline's usage-error and exclusive-conflict messages. Absent
+        /// it, no prefix is added (the prior behavior).
+        pub const message_prefix: []const u8 = if (@hasField(@TypeOf(cfg), "messagePrefix"))
+            cfg.messagePrefix
+        else
+            "";
 
         /// The non-derivable command attributes `command()` needs alongside a
         /// Spec: everything the Spec itself cannot express (name, help text,
@@ -382,13 +398,13 @@ pub fn Cli(comptime cfg: anytype) type {
                     const parsed = args.parseInto(Spec, arena_state.allocator(), ctx.argv, source, &diag) catch |e| switch (e) {
                         error.OutOfMemory => return e,
                         error.UsageError => {
-                            writeUsageError(ctx.err, diag.message, about.usage);
+                            writeUsageError(ctx.err, message_prefix, diag.message, about.usage);
                             return 2;
                         },
                     };
                     if (exclusiveConflict(Spec, about, parsed)) |conflict| {
                         const msg = std.fmt.allocPrint(arena_state.allocator(), "--{s} and --{s} are mutually exclusive", .{ conflict[0], conflict[1] }) catch "mutually exclusive flags";
-                        writeUsageError(ctx.err, msg, about.usage);
+                        writeUsageError(ctx.err, message_prefix, msg, about.usage);
                         return 2;
                     }
                     return run_fn(ctx, parsed);
@@ -476,46 +492,54 @@ pub fn Cli(comptime cfg: anytype) type {
         fn reportUnknownCommand(commands: []const Command, name: []const u8, err_w: *std.Io.Writer) u8 {
             if (!spec.looksLikeFlag(name)) {
                 if (suggestCommand(commands, name)) |suggestion| {
-                    err_w.print("unknown command \"{s}\" (did you mean \"{s}\"?)\n", .{ name, suggestion }) catch {};
+                    err_w.print("{s}unknown command \"{s}\" (did you mean \"{s}\"?)\n", .{ message_prefix, name, suggestion }) catch {};
                     return 2;
                 }
             }
-            err_w.print("unknown command \"{s}\"\n", .{name}) catch {};
+            err_w.print("{s}unknown command \"{s}\"\n", .{ message_prefix, name }) catch {};
             return 2;
         }
 
         /// Writes a command-body error to `w`: `describeError(e)`'s message
         /// when `cfg` provides that hook and it returns one, else
-        /// `error: <name>`.
-        fn reportError(w: *std.Io.Writer, e: anyerror) void {
+        /// `error: <name>`. `describeError` is called with a short-lived
+        /// arena scoped to `alloc`, deinited right after the message is
+        /// printed, so a formatted (`allocPrint`) message never leaks
+        /// regardless of what allocator the app's `run` was driven with.
+        fn reportError(alloc: std.mem.Allocator, w: *std.Io.Writer, e: anyerror) void {
             if (describe_error) |f| {
-                if (f(e)) |msg| {
+                var arena_state = std.heap.ArenaAllocator.init(alloc);
+                defer arena_state.deinit();
+                if (f(arena_state.allocator(), e)) |msg| {
                     if (msg.len > 0) {
-                        w.print("{s}\n", .{msg}) catch {};
+                        w.print("{s}{s}\n", .{ message_prefix, msg }) catch {};
                         return;
                     }
                 }
             }
-            w.print("error: {s}\n", .{@errorName(e)}) catch {};
+            w.print("{s}error: {s}\n", .{ message_prefix, @errorName(e) }) catch {};
         }
 
         /// Writes a `loadContext` failure to `w`: `diag.message` when
         /// non-empty, else `describeError(e)`'s message when present, else
-        /// `failed to load context: <name>`.
-        fn reportLoadContextError(w: *std.Io.Writer, e: anyerror, diag: args.Diagnostic) void {
+        /// `failed to load context: <name>`. See `reportError` for the
+        /// `describeError` allocator's lifetime.
+        fn reportLoadContextError(alloc: std.mem.Allocator, w: *std.Io.Writer, e: anyerror, diag: args.Diagnostic) void {
             if (diag.message.len > 0) {
-                w.print("{s}\n", .{diag.message}) catch {};
+                w.print("{s}{s}\n", .{ message_prefix, diag.message }) catch {};
                 return;
             }
             if (describe_error) |f| {
-                if (f(e)) |msg| {
+                var arena_state = std.heap.ArenaAllocator.init(alloc);
+                defer arena_state.deinit();
+                if (f(arena_state.allocator(), e)) |msg| {
                     if (msg.len > 0) {
-                        w.print("{s}\n", .{msg}) catch {};
+                        w.print("{s}{s}\n", .{ message_prefix, msg }) catch {};
                         return;
                     }
                 }
             }
-            w.print("failed to load context: {s}\n", .{@errorName(e)}) catch {};
+            w.print("{s}failed to load context: {s}\n", .{ message_prefix, @errorName(e) }) catch {};
         }
 
         /// Resolves `argv[1]` against `commands` by name, then walks deeper
@@ -655,12 +679,12 @@ pub fn Cli(comptime cfg: anytype) type {
                     if (version_cmd.needs_context) {
                         var diag = args.Diagnostic{};
                         ctx.context = cfg.loadContext(ctx.alloc, ctx.io, &diag) catch |e| {
-                            reportLoadContextError(err, e, diag);
+                            reportLoadContextError(alloc, err, e, diag);
                             return 1;
                         };
                     }
                     return version_cmd.run(&ctx) catch |e| {
-                        reportError(err, e);
+                        reportError(alloc, err, e);
                         return 1;
                     };
                 }
@@ -715,12 +739,12 @@ pub fn Cli(comptime cfg: anytype) type {
             if (leaf.needs_context) {
                 var diag = args.Diagnostic{};
                 ctx.context = cfg.loadContext(ctx.alloc, ctx.io, &diag) catch |e| {
-                    reportLoadContextError(err, e, diag);
+                    reportLoadContextError(alloc, err, e, diag);
                     return 1;
                 };
             }
             return leaf.run(&ctx) catch |e| {
-                reportError(err, e);
+                reportError(alloc, err, e);
                 return 1;
             };
         }
@@ -1297,7 +1321,7 @@ test "run's describeError hook prints its message instead of error: <name> for a
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
         .describeError = struct {
-            fn f(e: anyerror) ?[]const u8 {
+            fn f(_: std.mem.Allocator, e: anyerror) ?[]const u8 {
                 return if (e == error.Boom) "the boom failed" else null;
             }
         }.f,
@@ -1323,13 +1347,48 @@ test "run's describeError hook prints its message instead of error: <name> for a
     try std.testing.expectEqualStrings("the boom failed\n", err_w.buffered());
 }
 
+test "run's describeError hook can format dynamic content with the allocator it is handed, with no leak under std.testing.allocator" {
+    const TestCli = Cli(.{
+        .Context = void,
+        .Group = enum { general },
+        .loadContext = testNoopLoadContext,
+        .describeError = struct {
+            fn f(alloc: std.mem.Allocator, e: anyerror) ?[]const u8 {
+                return std.fmt.allocPrint(alloc, "internal error: {s}", .{@errorName(e)}) catch null;
+            }
+        }.f,
+    });
+
+    const cmd = TestCli.Command{
+        .name = "boom",
+        .group = .general,
+        .run = struct {
+            fn r(_: *TestCli.Ctx) anyerror!u8 {
+                return error.Sprocket;
+            }
+        }.r,
+    };
+
+    var out_buf: [64]u8 = undefined;
+    var out_w = std.Io.Writer.fixed(&out_buf);
+    var err_buf: [64]u8 = undefined;
+    var err_w = std.Io.Writer.fixed(&err_buf);
+
+    // std.testing.allocator fails this test on any leak; the arena
+    // reportError scopes around the describeError call must free the
+    // allocPrint'd message after printing it.
+    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "boom" }, &.{cmd}, &out_w, &err_w);
+    try std.testing.expectEqual(@as(u8, 1), code);
+    try std.testing.expectEqualStrings("internal error: Sprocket\n", err_w.buffered());
+}
+
 test "run falls back to error: <name> when describeError returns an empty string" {
     const TestCli = Cli(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
         .describeError = struct {
-            fn f(_: anyerror) ?[]const u8 {
+            fn f(_: std.mem.Allocator, _: anyerror) ?[]const u8 {
                 return "";
             }
         }.f,
@@ -1367,7 +1426,7 @@ test "run falls back to failed to load context: <name> when describeError return
         .Group = enum { general },
         .loadContext = S.loadContext,
         .describeError = struct {
-            fn f(_: anyerror) ?[]const u8 {
+            fn f(_: std.mem.Allocator, _: anyerror) ?[]const u8 {
                 return "";
             }
         }.f,
@@ -1462,7 +1521,7 @@ test "run's --version dispatch consults describeError the same way as a normal c
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
         .describeError = struct {
-            fn f(e: anyerror) ?[]const u8 {
+            fn f(_: std.mem.Allocator, e: anyerror) ?[]const u8 {
                 return if (e == error.Boom) "the boom failed" else null;
             }
         }.f,
@@ -1995,7 +2054,7 @@ test "run falls back to error: <name> when describeError is present but returns 
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
         .describeError = struct {
-            fn f(e: anyerror) ?[]const u8 {
+            fn f(_: std.mem.Allocator, e: anyerror) ?[]const u8 {
                 return if (e == error.OtherError) "unrelated" else null;
             }
         }.f,
@@ -2033,7 +2092,7 @@ test "run's loadContext failure with an empty diag.message falls back to describ
         .Group = enum { general },
         .loadContext = S.loadContext,
         .describeError = struct {
-            fn f(e: anyerror) ?[]const u8 {
+            fn f(_: std.mem.Allocator, e: anyerror) ?[]const u8 {
                 return if (e == error.Boom) "context load failed: boom" else null;
             }
         }.f,
@@ -3206,4 +3265,276 @@ test "run intercepts __schema and emits a 3-level subcommand tree nested to dept
     const c_subs = b_json.get("subcommands").?.array;
     try std.testing.expectEqual(@as(usize, 1), c_subs.items.len);
     try std.testing.expectEqualStrings("c", c_subs.items[0].object.get("name").?.string);
+}
+
+test "cfg.messagePrefix prepends to an unknown-command diagnostic" {
+    const TestCli = Cli(.{
+        .Context = void,
+        .Group = enum { general },
+        .loadContext = testNoopLoadContext,
+        .messagePrefix = "app: ",
+    });
+    const cmd = TestCli.Command{
+        .name = "status",
+        .group = .general,
+        .run = struct {
+            fn r(_: *TestCli.Ctx) anyerror!u8 {
+                return 0;
+            }
+        }.r,
+    };
+
+    var out_buf: [64]u8 = undefined;
+    var out_w = std.Io.Writer.fixed(&out_buf);
+    var err_buf: [128]u8 = undefined;
+    var err_w = std.Io.Writer.fixed(&err_buf);
+
+    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "stauts" }, &.{cmd}, &out_w, &err_w);
+    try std.testing.expectEqual(@as(u8, 2), code);
+    try std.testing.expect(std.mem.startsWith(u8, err_w.buffered(), "app: unknown command \"stauts\""));
+}
+
+test "cfg.messagePrefix prepends to a run_fn error" {
+    const TestCli = Cli(.{
+        .Context = void,
+        .Group = enum { general },
+        .loadContext = testNoopLoadContext,
+        .messagePrefix = "app: ",
+    });
+    const cmd = TestCli.Command{
+        .name = "boom",
+        .group = .general,
+        .run = struct {
+            fn r(_: *TestCli.Ctx) anyerror!u8 {
+                return error.Boom;
+            }
+        }.r,
+    };
+
+    var out_buf: [64]u8 = undefined;
+    var out_w = std.Io.Writer.fixed(&out_buf);
+    var err_buf: [64]u8 = undefined;
+    var err_w = std.Io.Writer.fixed(&err_buf);
+
+    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "boom" }, &.{cmd}, &out_w, &err_w);
+    try std.testing.expectEqual(@as(u8, 1), code);
+    try std.testing.expectEqualStrings("app: error: Boom\n", err_w.buffered());
+}
+
+test "cfg.messagePrefix prepends to a parse UsageError's message and usage line" {
+    const TestCli = Cli(.{
+        .Context = void,
+        .Group = enum { general },
+        .loadContext = testNoopLoadContext,
+        .messagePrefix = "app: ",
+    });
+
+    const S = struct {
+        fn r(_: *TestCli.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
+            return 0;
+        }
+    };
+
+    const cmd = TestCli.command(GreetSpec, .{
+        .name = "greet",
+        .group = .general,
+        .usage = "app greet [-v] [-p port] <name>",
+    }, S.r);
+
+    var out_buf: [64]u8 = undefined;
+    var out_w = std.Io.Writer.fixed(&out_buf);
+    var err_buf: [256]u8 = undefined;
+    var err_w = std.Io.Writer.fixed(&err_buf);
+
+    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "greet" }, &.{cmd}, &out_w, &err_w);
+    try std.testing.expectEqual(@as(u8, 2), code);
+    var lines = std.mem.splitScalar(u8, err_w.buffered(), '\n');
+    try std.testing.expect(std.mem.startsWith(u8, lines.next().?, "app: "));
+    try std.testing.expect(std.mem.startsWith(u8, lines.next().?, "app: usage: "));
+}
+
+test "cfg.messagePrefix prepends to an About.exclusive conflict message" {
+    const TestCli = Cli(.{
+        .Context = void,
+        .Group = enum { general },
+        .loadContext = testNoopLoadContext,
+        .messagePrefix = "app: ",
+    });
+
+    const S = struct {
+        fn r(_: *TestCli.Ctx, _: args.Args(ExclusiveSpec)) anyerror!u8 {
+            return 0;
+        }
+    };
+
+    const cmd = TestCli.command(ExclusiveSpec, .{
+        .name = "ex",
+        .group = .general,
+        .exclusive = &.{&.{ "a", "b" }},
+    }, S.r);
+
+    var out_buf: [64]u8 = undefined;
+    var out_w = std.Io.Writer.fixed(&out_buf);
+    var err_buf: [128]u8 = undefined;
+    var err_w = std.Io.Writer.fixed(&err_buf);
+
+    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "ex", "--a", "x", "--b", "y" }, &.{cmd}, &out_w, &err_w);
+    try std.testing.expectEqual(@as(u8, 2), code);
+    try std.testing.expect(std.mem.startsWith(u8, err_w.buffered(), "app: --a and --b are mutually exclusive"));
+}
+
+test "cfg.messagePrefix prepends to a loadContext failure's diag.message" {
+    const S = struct {
+        fn loadContext(_: std.mem.Allocator, _: std.Io, diag: *args.Diagnostic) anyerror!ContextSentinel {
+            diag.message = "config.toml:3 bad";
+            return error.Boom;
+        }
+    };
+
+    const TestCli = Cli(.{
+        .Context = ContextSentinel,
+        .Group = enum { general },
+        .loadContext = S.loadContext,
+        .messagePrefix = "app: ",
+    });
+
+    const cmd = TestCli.Command{
+        .name = "with",
+        .group = .general,
+        .needs_context = true,
+        .run = struct {
+            fn r(_: *TestCli.Ctx) anyerror!u8 {
+                return 0;
+            }
+        }.r,
+    };
+
+    var out_buf: [64]u8 = undefined;
+    var out_w = std.Io.Writer.fixed(&out_buf);
+    var err_buf: [64]u8 = undefined;
+    var err_w = std.Io.Writer.fixed(&err_buf);
+
+    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "with" }, &.{cmd}, &out_w, &err_w);
+    try std.testing.expectEqual(@as(u8, 1), code);
+    try std.testing.expectEqualStrings("app: config.toml:3 bad\n", err_w.buffered());
+}
+
+test "without cfg.messagePrefix, framework stderr messages are unprefixed (unchanged behavior)" {
+    const TestCli = Cli(.{
+        .Context = void,
+        .Group = enum { general },
+        .loadContext = testNoopLoadContext,
+    });
+    const cmd = TestCli.Command{
+        .name = "boom",
+        .group = .general,
+        .run = struct {
+            fn r(_: *TestCli.Ctx) anyerror!u8 {
+                return error.Boom;
+            }
+        }.r,
+    };
+
+    var out_buf: [64]u8 = undefined;
+    var out_w = std.Io.Writer.fixed(&out_buf);
+    var err_buf: [64]u8 = undefined;
+    var err_w = std.Io.Writer.fixed(&err_buf);
+
+    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "boom" }, &.{cmd}, &out_w, &err_w);
+    try std.testing.expectEqual(@as(u8, 1), code);
+    try std.testing.expectEqualStrings("error: Boom\n", err_w.buffered());
+}
+
+/// Fix-4 leak audit: drives every cli-zig-internal `run` path (no command,
+/// `--help`, `help`, `<cmd> --help`, `__complete`, `__schema`, `completion
+/// <shell>`, a plain dispatch, a run_fn error with an allocating
+/// `describeError`, and an `About.exclusive` conflict) under
+/// `std.testing.allocator`, which fails the test on any leak. Deliberately
+/// excludes a failing `loadContext`'s `diag.message`: that allocation is the
+/// app's own `loadContext` hook, not cli-zig's, and the framework's contract
+/// (see the `cfg` doc comment and README "Memory model") already discloses
+/// that it is never freed by `run` - reclaimed by process exit in a real
+/// binary, by design, not a cli-zig-internal leak.
+const LeakAuditSpec = struct {
+    verbose: spec.Flag(.{ .short = 'v' }),
+};
+
+test "Fix 4: no cli-zig-internal leak across help/version/__complete/__schema/completion/error/exclusive paths under std.testing.allocator" {
+    const TestCli = Cli(.{
+        .Context = void,
+        .Group = enum { general },
+        .loadContext = testNoopLoadContext,
+        .describeError = struct {
+            fn f(alloc: std.mem.Allocator, e: anyerror) ?[]const u8 {
+                return std.fmt.allocPrint(alloc, "internal error: {s}", .{@errorName(e)}) catch null;
+            }
+        }.f,
+    });
+
+    const boom_cmd = TestCli.Command{
+        .name = "boom",
+        .group = .general,
+        .run = struct {
+            fn r(_: *TestCli.Ctx) anyerror!u8 {
+                return error.Boom;
+            }
+        }.r,
+    };
+    const version_cmd = TestCli.Command{
+        .name = "version",
+        .group = .general,
+        .run = struct {
+            fn r(ctx: *TestCli.Ctx) anyerror!u8 {
+                try ctx.out.writeAll("1.0.0\n");
+                return 0;
+            }
+        }.r,
+    };
+    const greet_cmd = TestCli.command(GreetSpec, .{
+        .name = "greet",
+        .group = .general,
+        .usage = "app greet [-v] [-p port] <name>",
+    }, struct {
+        fn r(_: *TestCli.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
+            return 0;
+        }
+    }.r);
+    const ex_cmd = TestCli.command(ExclusiveSpec, .{
+        .name = "ex",
+        .group = .general,
+        .exclusive = &.{&.{ "a", "b" }},
+    }, struct {
+        fn r(_: *TestCli.Ctx, _: args.Args(ExclusiveSpec)) anyerror!u8 {
+            return 0;
+        }
+    }.r);
+
+    const commands = &.{ boom_cmd, version_cmd, greet_cmd, ex_cmd };
+
+    const runs = [_][]const []const u8{
+        &.{"app"},
+        &.{ "app", "--help" },
+        &.{ "app", "help" },
+        &.{ "app", "help", "greet" },
+        &.{ "app", "greet", "--help" },
+        &.{ "app", "__complete", "gr" },
+        &.{ "app", "__complete", "greet", "--" },
+        &.{ "app", "__schema" },
+        &.{ "app", "completion", "bash" },
+        &.{ "app", "greet", "world" },
+        &.{ "app", "boom" },
+        &.{ "app", "--version" },
+        &.{ "app", "ex", "--a", "x", "--b", "y" },
+        &.{ "app", "ex", "--a", "x" },
+        &.{ "app", "bogus" },
+    };
+
+    for (runs) |argv| {
+        var out_buf: [4096]u8 = undefined;
+        var out_w = std.Io.Writer.fixed(&out_buf);
+        var err_buf: [512]u8 = undefined;
+        var err_w = std.Io.Writer.fixed(&err_buf);
+
+        _ = try TestCli.run(std.testing.allocator, std.testing.io, argv, commands, &out_w, &err_w);
+    }
 }

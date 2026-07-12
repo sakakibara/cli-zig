@@ -22,6 +22,33 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   calls them instead of the built-in help renderer for top-level and
   per-command help respectively, letting an app replace the whole help
   layout rather than only the group heading and footer.
+- `cfg.messagePrefix`: an optional `[]const u8` prepended to every
+  framework-generated stderr message - the unknown-command diagnostic, a
+  command-body error, a `loadContext` failure, a parse `UsageError`'s
+  message and usage line, and an `About.exclusive` conflict message. Absent
+  it, no prefix is added.
+
+### Changed
+
+- **Breaking:** `cfg.describeError`'s signature is now `fn (alloc:
+  std.mem.Allocator, err: anyerror) ?[]const u8`, so it can format dynamic
+  content (e.g. `allocPrint(alloc, "internal error: {s}", .{@errorName(err)})`)
+  instead of only returning a static string. The allocator is a short-lived
+  arena scoped to the one `run` error-reporting call and freed right after
+  the message is printed, so a formatted message never needs the hook to
+  free it itself.
+
+### Fixed
+
+- A Spec pairing a fixed positional with a variadic (`Rest`) field no longer
+  lets the positional dip into tokens after a lone `--`: when a `Rest` field
+  is present, a fixed positional resolves only from tokens before `--`, and
+  every post-`--` token belongs to the variadic exclusively. Previously
+  `cmd <optional-pos> -- <passthrough...>` misparsed - `cmd --flag x -- a b`
+  bound the positional to `a` instead of leaving it unfilled. A Spec with no
+  `Rest` field is unaffected: its positional can still claim a post-`--`
+  token verbatim, which remains the only way such a Spec accepts a dash-led
+  positional value.
 
 ## [0.1.0] - 2026-07-12
 
