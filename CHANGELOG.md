@@ -38,8 +38,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the message is printed, so a formatted message never needs the hook to
   free it itself.
 
+- `resolve.parseValue` now accepts float `Value` types (`std.fmt.parseFloat`),
+  alongside the existing integer, enum, and string support.
+
 ### Fixed
 
+- A bad option or positional value now reports a type-aware message naming
+  what was expected instead of a generic `invalid value for --x: y`: an
+  integer field says `--jobs requires an integer, got "x"`, a float field
+  says `requires a number`, an enum field lists its variants (`requires one
+  of: fast, slow`), and a bool field says `requires true or false`.
 - A Spec pairing a fixed positional with a variadic (`Rest`) field no longer
   lets the positional dip into tokens after a lone `--`: when a `Rest` field
   is present, a fixed positional resolves only from tokens before `--`, and

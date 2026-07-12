@@ -157,7 +157,7 @@ pub fn parseInto(comptime Spec: type, alloc: std.mem.Allocator, argv: []const []
                 const raw = opt orelse fallback(info.meta, f.name, source);
                 @field(result, f.name) = if (raw) |s|
                     resolve.parseValue(info.Value, s) catch
-                        return usageError(alloc, diag, "invalid value for --" ++ long ++ ": {s}", .{s})
+                        return usageError(alloc, diag, "--" ++ long ++ " requires {s}, got \"{s}\"", .{ resolve.typeDesc(info.Value), s })
                 else
                     null;
             },
@@ -183,7 +183,7 @@ pub fn parseInto(comptime Spec: type, alloc: std.mem.Allocator, argv: []const []
             const raw = p.positional(!has_rest) orelse fallback(info.meta, f.name, source);
             if (raw) |s| {
                 @field(result, f.name) = resolve.parseValue(info.Value, s) catch
-                    return usageError(alloc, diag, "invalid value for " ++ f.name ++ ": {s}", .{s});
+                    return usageError(alloc, diag, f.name ++ " requires {s}, got \"{s}\"", .{ resolve.typeDesc(info.Value), s });
             } else if (info.meta.optional) {
                 @field(result, f.name) = null;
             } else {
@@ -576,4 +576,57 @@ test "parseInto: a repeated option is last-wins, two-token and =value forms" {
 
     const r2 = try parseInto(Spec, a, &.{ "--port=1", "--port=2" }, src, null);
     try std.testing.expectEqual(@as(?u16, 2), r2.port);
+}
+
+test "parseInto: an invalid int option's diagnostic names the flag and the integer type" {
+    const a = std.testing.allocator;
+    const Spec = struct { jobs: spec.Opt(usize, .{}) };
+    const src = Source{ .env_get = envNone, .config_get = null };
+
+    var diag = Diagnostic{};
+    const bad = parseInto(Spec, a, &.{ "--jobs", "abc" }, src, &diag);
+    defer a.free(diag.message);
+
+    try std.testing.expectError(error.UsageError, bad);
+    try std.testing.expectEqualStrings("--jobs requires an integer, got \"abc\"", diag.message);
+}
+
+test "parseInto: an invalid int positional's diagnostic names the field and the integer type" {
+    const a = std.testing.allocator;
+    const Spec = struct { count: spec.Pos(usize, .{}) };
+    const src = Source{ .env_get = envNone, .config_get = null };
+
+    var diag = Diagnostic{};
+    const bad = parseInto(Spec, a, &.{"abc"}, src, &diag);
+    defer a.free(diag.message);
+
+    try std.testing.expectError(error.UsageError, bad);
+    try std.testing.expectEqualStrings("count requires an integer, got \"abc\"", diag.message);
+}
+
+test "parseInto: an invalid enum option's diagnostic lists the variant names" {
+    const a = std.testing.allocator;
+    const Level = enum { fast, slow };
+    const Spec = struct { level: spec.Opt(Level, .{}) };
+    const src = Source{ .env_get = envNone, .config_get = null };
+
+    var diag = Diagnostic{};
+    const bad = parseInto(Spec, a, &.{ "--level", "medium" }, src, &diag);
+    defer a.free(diag.message);
+
+    try std.testing.expectError(error.UsageError, bad);
+    try std.testing.expectEqualStrings("--level requires one of: fast, slow, got \"medium\"", diag.message);
+}
+
+test "parseInto: an invalid float option's diagnostic says it requires a number" {
+    const a = std.testing.allocator;
+    const Spec = struct { rate: spec.Opt(f64, .{}) };
+    const src = Source{ .env_get = envNone, .config_get = null };
+
+    var diag = Diagnostic{};
+    const bad = parseInto(Spec, a, &.{ "--rate", "notanumber" }, src, &diag);
+    defer a.free(diag.message);
+
+    try std.testing.expectError(error.UsageError, bad);
+    try std.testing.expectEqualStrings("--rate requires a number, got \"notanumber\"", diag.message);
 }

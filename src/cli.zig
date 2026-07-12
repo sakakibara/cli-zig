@@ -1580,7 +1580,7 @@ test "command() trampoline reports a bad typed-option value and never calls run_
     const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "greet", "-p", "xyz", "world" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 2), code);
     try std.testing.expect(err_w.buffered().len != 0);
-    try std.testing.expect(std.mem.indexOf(u8, err_w.buffered(), "invalid value") != null);
+    try std.testing.expect(std.mem.indexOf(u8, err_w.buffered(), "requires an integer") != null);
     try std.testing.expect(!S.called);
 }
 
