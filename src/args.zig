@@ -95,12 +95,19 @@ fn usageError(alloc: std.mem.Allocator, diag: ?*Diagnostic, comptime fmt: []cons
 
 /// Drives a `parse.Parser` over `Spec`'s declared flags/options/positionals
 /// and resolves each field's string by precedence argv > env > config >
-/// default, parsing it to the field's `Value` type. Two passes over the
+/// default, parsing it to the field's `Value` type. Three passes over the
 /// comptime fields, regardless of declaration order: pass 1 claims every
 /// flag and value-option so a two-token option's value can never be stolen
 /// by `positional()`; pass 2 reads all fixed positionals; pass 3 reads the
-/// variadic tail, which sees only post-"--" tokens no positional claimed.
-/// A required positional with no resolved value is `error.UsageError`.
+/// variadic tail. When `Spec` declares a variadic (`Rest`) field, a fixed
+/// positional may only resolve from a token before a lone "--": it never
+/// dips into the post-"--" tail, which belongs to the variadic exclusively,
+/// so a starved optional positional resolves to its fallback/null and a
+/// starved required one is `error.UsageError` even when post-"--" tokens
+/// exist. A `Spec` with no variadic field keeps the older behavior: a
+/// positional may still claim a post-"--" token verbatim (dash-led included),
+/// since that is the only way such a Spec can accept a dash-led positional
+/// value. A required positional with no resolved value is `error.UsageError`.
 ///
 /// The result's variadic (`rest`) slice is owned by `alloc` and outlives the
 /// Parser; its elements point into the caller's `argv`. Intended usage is an
@@ -158,13 +165,22 @@ pub fn parseInto(comptime Spec: type, alloc: std.mem.Allocator, argv: []const []
         }
     }
 
+    // A variadic (Rest) field anywhere in the Spec means a fixed positional
+    // must never dip past a lone "--": every post-"--" token belongs to the
+    // variadic exclusively. Computed once, order-independent.
+    const has_rest = comptime blk: {
+        for (fields) |f| {
+            if (@field(f.type, "arg_info").kind == .variadic) break :blk true;
+        }
+        break :blk false;
+    };
+
     // Fixed positionals resolve before the variadic, regardless of field
-    // order, so a positional starved of a pre-"--" token may claim the first
-    // post-"--" token while the variadic takes only the remainder.
+    // order.
     inline for (fields) |f| {
         const info = @field(f.type, "arg_info");
         if (info.kind == .positional) {
-            const raw = p.positional() orelse fallback(info.meta, f.name, source);
+            const raw = p.positional(!has_rest) orelse fallback(info.meta, f.name, source);
             if (raw) |s| {
                 @field(result, f.name) = resolve.parseValue(info.Value, s) catch
                     return usageError(alloc, diag, "invalid value for " ++ f.name ++ ": {s}", .{s});
@@ -408,7 +424,7 @@ test "parseInto: -- is never reported as a leftover argument even with no positi
     try std.testing.expect(r.flag);
 }
 
-test "parseInto: a starved positional and a variadic do not double-claim a post-- token" {
+test "parseInto: with a Rest field, a required positional starved of a pre-- token errors even though post-- tokens exist" {
     const a = std.testing.allocator;
     const Spec = struct {
         p: spec.Pos([]const u8, .{}),
@@ -416,28 +432,50 @@ test "parseInto: a starved positional and a variadic do not double-claim a post-
     };
     const src = Source{ .env_get = envNone, .config_get = null };
 
-    const r = try parseInto(Spec, a, &.{ "--", "b", "c" }, src, null);
-    defer a.free(r.rest);
-
-    try std.testing.expectEqualStrings("b", r.p);
-    try std.testing.expectEqual(@as(usize, 1), r.rest.len);
-    try std.testing.expectEqualStrings("c", r.rest[0]);
+    // p may not dip past "--" to claim "a" - it stays unfilled, which is a
+    // UsageError for a required positional, even though the Rest field
+    // could easily have absorbed everything.
+    var diag = Diagnostic{};
+    const bad = parseInto(Spec, a, &.{ "--", "a" }, src, &diag);
+    defer a.free(diag.message);
+    try std.testing.expectError(error.UsageError, bad);
+    try std.testing.expect(std.mem.indexOf(u8, diag.message, "missing required argument") != null);
 }
 
-test "parseInto: the positional/variadic split of post-- tokens is field-order independent" {
-    const a = std.testing.allocator;
-    const Spec = struct {
-        rest: spec.Rest(.{}),
-        p: spec.Pos([]const u8, .{}),
-    };
+test "parseInto: with a Rest field, a starved optional positional resolves to null and the variadic takes every post-- token; order-independent" {
     const src = Source{ .env_get = envNone, .config_get = null };
 
-    const r = try parseInto(Spec, a, &.{ "--", "b", "c" }, src, null);
-    defer a.free(r.rest);
+    // p declared before rest.
+    {
+        const a = std.testing.allocator;
+        const Spec = struct {
+            p: spec.Pos([]const u8, .{ .optional = true }),
+            rest: spec.Rest(.{}),
+        };
+        const r = try parseInto(Spec, a, &.{ "--", "a", "b" }, src, null);
+        defer a.free(r.rest);
 
-    try std.testing.expectEqualStrings("b", r.p);
-    try std.testing.expectEqual(@as(usize, 1), r.rest.len);
-    try std.testing.expectEqualStrings("c", r.rest[0]);
+        try std.testing.expectEqual(@as(?[]const u8, null), r.p);
+        try std.testing.expectEqual(@as(usize, 2), r.rest.len);
+        try std.testing.expectEqualStrings("a", r.rest[0]);
+        try std.testing.expectEqualStrings("b", r.rest[1]);
+    }
+
+    // rest declared before p - same result, proving field-order independence.
+    {
+        const a = std.testing.allocator;
+        const Spec = struct {
+            rest: spec.Rest(.{}),
+            p: spec.Pos([]const u8, .{ .optional = true }),
+        };
+        const r = try parseInto(Spec, a, &.{ "--", "a", "b" }, src, null);
+        defer a.free(r.rest);
+
+        try std.testing.expectEqual(@as(?[]const u8, null), r.p);
+        try std.testing.expectEqual(@as(usize, 2), r.rest.len);
+        try std.testing.expectEqualStrings("a", r.rest[0]);
+        try std.testing.expectEqualStrings("b", r.rest[1]);
+    }
 }
 
 test "parseInto: a pre-- positional and a post-- variadic do not overlap" {

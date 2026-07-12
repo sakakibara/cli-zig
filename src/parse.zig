@@ -277,10 +277,17 @@ pub const Parser = struct {
     }
 
     /// Next unconsumed token, in argv order. Before a lone "--" (if any) it
-    /// must not be flag-shaped; the "--" itself is skipped; at or past it,
-    /// every token is returned verbatim regardless of shape.
-    pub fn positional(self: *Parser) ?[]const u8 {
-        for (self.tokens, 0..) |*t, i| {
+    /// must not be flag-shaped. `allow_past_dashdash` governs what happens
+    /// once the pre-"--" tokens are exhausted: when true, the "--" itself is
+    /// skipped and every token past it is returned verbatim regardless of
+    /// shape (the no-variadic Spec case, where a positional is the only way
+    /// to reach a post-"--" value); when false, scanning stops at "--" and a
+    /// starved call returns null without touching "--" or anything past it,
+    /// leaving those tokens exclusively for `restAfterDoubleDash` (the
+    /// Pos+Rest case).
+    pub fn positional(self: *Parser, allow_past_dashdash: bool) ?[]const u8 {
+        const limit = if (allow_past_dashdash) self.tokens.len else (self.dashdash orelse self.tokens.len);
+        for (self.tokens[0..limit], 0..) |*t, i| {
             if (t.consumed) continue;
             if (self.dashdash) |dd| {
                 if (i == dd) {
@@ -302,12 +309,12 @@ pub const Parser = struct {
     /// Post-"--" tokens not already claimed, verbatim, in argv order.
     /// Consumes "--" and each token it returns, so a later `flag`/`option`/
     /// `positional` call never mistakes passthrough content for one of the
-    /// parser's own switches. A fixed positional that dipped past "--" (via
-    /// `positional`) has already consumed a leading run of these tokens;
-    /// those are skipped so the same token is never handed to both a
-    /// positional and the variadic. Empty slice when no "--" token is
-    /// present. Caller does not own the returned slice's memory beyond the
-    /// Parser's lifetime.
+    /// parser's own switches. A caller with no variadic field may still call
+    /// `positional(true)` first and let it dip past "--"; any token that
+    /// dipped is already consumed and is skipped here so the same token is
+    /// never handed to both a positional and this passthrough tail. Empty
+    /// slice when no "--" token is present. Caller does not own the returned
+    /// slice's memory beyond the Parser's lifetime.
     pub fn restAfterDoubleDash(self: *Parser) Error![]const []const u8 {
         const dd = self.dashdash orelse return &.{};
         self.tokens[dd].consumed = true;
@@ -349,7 +356,7 @@ test "parser: flags, options, positionals, passthrough, finish" {
     defer p.deinit();
     try std.testing.expect(try p.flag("json", null));
     try std.testing.expectEqualStrings("8080", (try p.option("port", 'p')).?);
-    try std.testing.expectEqualStrings("name", p.positional().?);
+    try std.testing.expectEqualStrings("name", p.positional(true).?);
     const rest = try p.restAfterDoubleDash();
     try std.testing.expectEqual(@as(usize, 2), rest.len);
     try p.finish(); // nothing left over
@@ -389,9 +396,30 @@ test "parser: positional() returns tokens after a lone -- verbatim, including da
     const a = std.testing.allocator;
     var p = try Parser.init(a, &.{ "x", "--", "-y" });
     defer p.deinit();
-    try std.testing.expectEqualStrings("x", p.positional().?);
-    try std.testing.expectEqualStrings("-y", p.positional().?);
+    try std.testing.expectEqualStrings("x", p.positional(true).?);
+    try std.testing.expectEqualStrings("-y", p.positional(true).?);
     try p.finish();
+}
+
+test "parser: positional(false) refuses to dip past a lone --, leaving it and everything after untouched" {
+    const a = std.testing.allocator;
+    var p = try Parser.init(a, &.{ "--", "a", "b" });
+    defer p.deinit();
+    try std.testing.expectEqual(@as(?[]const u8, null), p.positional(false));
+    const rest = try p.restAfterDoubleDash();
+    try std.testing.expectEqual(@as(usize, 2), rest.len);
+    try std.testing.expectEqualStrings("a", rest[0]);
+    try std.testing.expectEqualStrings("b", rest[1]);
+}
+
+test "parser: positional(false) still resolves a token that appears before --" {
+    const a = std.testing.allocator;
+    var p = try Parser.init(a, &.{ "x", "--", "a" });
+    defer p.deinit();
+    try std.testing.expectEqualStrings("x", p.positional(false).?);
+    const rest = try p.restAfterDoubleDash();
+    try std.testing.expectEqual(@as(usize, 1), rest.len);
+    try std.testing.expectEqualStrings("a", rest[0]);
 }
 
 test "parser: finish() does not report a lone -- even when nothing consumes it" {
