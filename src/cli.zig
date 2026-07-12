@@ -293,9 +293,10 @@ pub fn Cli(comptime cfg: anytype) type {
         /// stderr message by putting a `messagePrefix` on `cfg` - the same
         /// `@hasField` gate `describeError`/`makeSource` use. When present,
         /// it is prepended verbatim to `reportUnknownCommand`,
-        /// `reportError`, `reportLoadContextError`, and the `command()`
-        /// trampoline's usage-error and exclusive-conflict messages. Absent
-        /// it, no prefix is added (the prior behavior).
+        /// `reportError`, `reportLoadContextError`, the `command()`
+        /// trampoline's usage-error and exclusive-conflict messages, and the
+        /// `completion` command's usage/unknown-shell errors. Absent it, no
+        /// prefix is added (the prior behavior).
         pub const message_prefix: []const u8 = if (@hasField(@TypeOf(cfg), "messagePrefix"))
             cfg.messagePrefix
         else
@@ -657,11 +658,11 @@ pub fn Cli(comptime cfg: anytype) type {
 
             if (argv.len >= 2 and std.mem.eql(u8, argv[1], "completion")) {
                 if (argv.len < 3) {
-                    err.print("usage: {s} completion <shell>\n", .{prog_name}) catch {};
+                    err.print("{s}usage: {s} completion <shell>\n", .{ message_prefix, prog_name }) catch {};
                     return 2;
                 }
                 const sh = shells.parse(argv[2]) orelse {
-                    err.print("unknown shell: {s}\n", .{argv[2]}) catch {};
+                    err.print("{s}unknown shell: {s}\n", .{ message_prefix, argv[2] }) catch {};
                     return 2;
                 };
                 shells.emit(out, sh, std.fs.path.basename(prog_name)) catch {};
