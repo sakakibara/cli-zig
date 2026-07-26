@@ -34,15 +34,15 @@ const cli = @import("cli");
 
 const Group = enum { general };
 
-fn loadContext(_: std.mem.Allocator, _: std.Io, _: *cli.args.Diagnostic) anyerror!void {}
+fn loadContext(_: std.mem.Allocator, _: std.Io, _: *cli.Diagnostic) anyerror!void {}
 
-const App = cli.cli.Cli(.{ .Context = void, .Group = Group, .loadContext = loadContext });
+const App = cli.App(.{ .Context = void, .Group = Group, .loadContext = loadContext });
 
 const GreetSpec = struct {
-    name: cli.spec.Pos([]const u8, .{ .help = "who to greet" }),
+    name: cli.Pos([]const u8, .{ .help = "who to greet" }),
 };
 
-fn greetRun(ctx: *App.Ctx, a: cli.args.Args(GreetSpec)) anyerror!u8 {
+fn greetRun(ctx: *App.Ctx, a: cli.Args(GreetSpec)) anyerror!u8 {
     try ctx.out.print("hello, {s}\n", .{a.name});
     return 0;
 }
@@ -76,20 +76,20 @@ exe.root_module.addImport("cli", cli.module("cli"));
 
 ### Defining a typed command
 
-A Spec is a plain struct; each field's type comes from `cli.spec.Flag`,
+A Spec is a plain struct; each field's type comes from `cli.Flag`,
 `.Opt(T, ...)`, `.Pos(T, ...)`, or `.Rest(...)`. `command(Spec, About,
 run_fn)` derives that command's `Flag`/`Arg` metadata at comptime and wraps
-`run_fn` in a trampoline that parses argv into `args.Args(Spec)` before
+`run_fn` in a trampoline that parses argv into `Args(Spec)` before
 calling it - a bad parse never reaches `run_fn`.
 
 ```zig
 const GreetSpec = struct {
-    verbose: cli.spec.Flag(.{ .short = 'v', .help = "print an extra detail line" }),
-    port: cli.spec.Opt(u16, .{ .short = 'p', .help = "port to greet on", .value_name = "PORT" }),
-    name: cli.spec.Pos([]const u8, .{ .help = "who to greet" }),
+    verbose: cli.Flag(.{ .short = 'v', .help = "print an extra detail line" }),
+    port: cli.Opt(u16, .{ .short = 'p', .help = "port to greet on", .value_name = "PORT" }),
+    name: cli.Pos([]const u8, .{ .help = "who to greet" }),
 };
 
-fn greetRun(ctx: *App.Ctx, a: cli.args.Args(GreetSpec)) anyerror!u8 {
+fn greetRun(ctx: *App.Ctx, a: cli.Args(GreetSpec)) anyerror!u8 {
     try ctx.out.print("hello, {s}\n", .{a.name});
     if (a.verbose) try ctx.out.print("  (port={d})\n", .{a.port orelse 0});
     return 0;
@@ -131,9 +131,9 @@ const status_cmd = App.Command{
 };
 ```
 
-### Dispatching with Cli(cfg)
+### Dispatching with App(cfg)
 
-`Cli(cfg)` is comptime-parameterized per app: `cfg.Context` is the value a
+`App(cfg)` is comptime-parameterized per app: `cfg.Context` is the value a
 command can request via `About.needs_context`, `cfg.Group` is the enum used
 to section commands in help output, and `cfg.loadContext` produces a
 `Context`. `App.run` resolves `argv[1]` against the registered commands and
@@ -175,16 +175,16 @@ comes up empty, before a literal string `default`:
 
 ```zig
 const DeploySpec = struct {
-    profile: cli.spec.Opt([]const u8, .{
+    profile: cli.Opt([]const u8, .{
         .env = "APP_PROFILE",
         .default = "personal",
     }),
-    port: cli.spec.Opt(u16, .{ .default = "8080" }),
+    port: cli.Opt(u16, .{ .default = "8080" }),
 };
 ```
 
 Env and config lookups come from a `Source` an app builds itself - `cfg`
-opts in with an optional `makeSource(ctx: *App.Ctx) args.Source` hook.
+opts in with an optional `makeSource(ctx: *App.Ctx) cli.Source` hook.
 Absent it, only argv and `.default` apply.
 
 ### Subcommands
@@ -231,7 +231,7 @@ fn resolveCompletion(alloc: std.mem.Allocator, key: []const u8, _: ?[]const u8, 
     return .{ .directive = .default, .candidates = try out.toOwnedSlice(alloc) };
 }
 
-const App = cli.cli.Cli(.{
+const App = cli.App(.{
     .Context = void,
     .Group = Group,
     .loadContext = loadContext,
@@ -239,7 +239,7 @@ const App = cli.cli.Cli(.{
 });
 
 const DeploySpec = struct {
-    env: cli.spec.Opt([]const u8, .{ .help = "target environment", .complete = .{ .dynamic = "env" } }),
+    env: cli.Opt([]const u8, .{ .help = "target environment", .complete = .{ .dynamic = "env" } }),
 };
 ```
 
@@ -275,23 +275,20 @@ command of the same name.
 
 | Function | Purpose |
 | --- | --- |
-| `cli.Cli(cfg)` | Comptime-parameterized dispatcher: builds `Ctx`, `Command`, `About`, `command()`, and `run` for one app. |
-| `Cli(cfg).command(Spec, about, run_fn)` | Derives a `Command` from a typed Spec, wrapping `run_fn` in an argv-parsing trampoline. |
-| `Cli(cfg).run(alloc, io, argv, commands, out, err)` | Resolves `argv[1..]` against `commands` and dispatches, handling help/completion/schema/version interception. |
-| `args.Args(Spec)` | The typed result struct a Spec reifies to. |
-| `args.parseInto(Spec, alloc, argv, source, diag)` | Parses `argv` into `Args(Spec)`, resolving each field by argv > env > config > default. |
-| `spec.Flag(meta)` / `.Opt(T, meta)` / `.Pos(T, meta)` / `.Rest(meta)` | Spec field-type constructors. |
-| `spec.kebab(name)` | Comptime underscore-to-hyphen conversion for a field's long flag spelling. |
-| `shells.parse(name)` / `shells.emit(w, shell, prog_name)` | Look up a `Shell` by name; write its completion script. |
-| `schema.Emitter(Command, Flag, Arg, Group).emit(w, prog_name, table)` | Writes the versioned JSON schema envelope. |
+| `cli.App(cfg)` | Comptime-parameterized dispatcher: builds `Ctx`, `Command`, `About`, `command()`, and `run` for one app. |
+| `App(cfg).command(Spec, about, run_fn)` | Derives a `Command` from a typed Spec, wrapping `run_fn` in an argv-parsing trampoline. |
+| `App(cfg).run(alloc, io, argv, commands, out, err)` | Resolves `argv[1..]` against `commands` and dispatches, handling help/completion/schema/version interception. |
+| `cli.Args(Spec)` | The typed result struct a Spec reifies to. |
+| `cli.parseInto(Spec, alloc, argv, source, diag)` | Parses `argv` into `Args(Spec)`, resolving each field by argv > env > config > default. |
+| `cli.Flag(meta)` / `cli.Opt(T, meta)` / `cli.Pos(T, meta)` / `cli.Rest(meta)` | Spec field-type constructors. |
+| `cli.looksLikeFlag(token)` | A flag-shaped token: starts with `-` and is more than a bare `-`. |
 
 ### Types
 
-`spec.Kind`, `spec.Info`, `spec.Meta` (re-exported as `meta.Meta`),
-`meta.Complete`, `args.Source`, `args.Diagnostic`, `parse.Error`,
-`complete.Directive`, `complete.Candidate`, `complete.Result`,
-`shells.Shell`, `Cli(cfg).Ctx`, `Cli(cfg).Command`, `Cli(cfg).About`,
-`Cli(cfg).Flag`, `Cli(cfg).Arg`.
+`cli.Source`, `cli.Diagnostic`, `cli.meta.Meta`, `cli.meta.Complete`,
+`cli.complete.Directive`, `cli.complete.Candidate`, `cli.complete.Result`,
+`App(cfg).Ctx`, `App(cfg).Command`, `App(cfg).About`, `App(cfg).Flag`,
+`App(cfg).Arg`.
 
 Generated reference docs are published at
 **https://sakakibara.github.io/cli-zig/**.
@@ -317,7 +314,7 @@ zig build docs             # generate reference docs
 
 ## Memory model
 
-`Cli(cfg).command`'s trampoline opens a fresh arena for each dispatch and
+`App(cfg).command`'s trampoline opens a fresh arena for each dispatch and
 frees it wholesale on return - a command's `run_fn` never tracks or frees a
 parsed value itself. Parsed `[]const u8` values (flag values, positionals)
 are slices into the caller's own `argv`, so they stay valid only as long as

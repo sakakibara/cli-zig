@@ -4,7 +4,7 @@
 const std = @import("std");
 
 /// A renderer for one app's `Command`/`Flag`/`Arg`/`Group` shapes, generic
-/// over whatever `Cli(cfg)` monomorphized them to.
+/// over whatever `App(cfg)` monomorphized them to.
 pub fn Renderer(comptime Command: type, comptime Flag: type, comptime Arg: type, comptime Group: type) type {
     return struct {
         fn padTo(w: *std.Io.Writer, text: []const u8, width: usize) !void {

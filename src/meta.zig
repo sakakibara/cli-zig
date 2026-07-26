@@ -13,7 +13,7 @@ pub const Complete = union(enum) {
     /// A fixed candidate list, filtered against the word under the cursor.
     choices: []const []const u8,
     /// Resolved at completion time via the app's `resolveCompletion` hook
-    /// (see `cli.Cli`'s `cfg.resolveCompletion`); the payload is the key
+    /// (see `App`'s `cfg.resolveCompletion`); the payload is the key
     /// passed to that hook.
     dynamic: []const u8,
 };

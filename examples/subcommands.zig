@@ -9,29 +9,29 @@ const cli = @import("cli");
 
 const Group = enum { general };
 
-fn loadContext(_: std.mem.Allocator, _: std.Io, _: *cli.args.Diagnostic) anyerror!void {}
+fn loadContext(_: std.mem.Allocator, _: std.Io, _: *cli.Diagnostic) anyerror!void {}
 
-const App = cli.cli.Cli(.{
+const App = cli.App(.{
     .Context = void,
     .Group = Group,
     .loadContext = loadContext,
 });
 
 const RemoteSpec = struct {
-    verbose: cli.spec.Flag(.{ .short = 'v', .help = "list remotes with their URLs" }),
+    verbose: cli.Flag(.{ .short = 'v', .help = "list remotes with their URLs" }),
 };
 
-fn remoteRun(ctx: *App.Ctx, a: cli.args.Args(RemoteSpec)) anyerror!u8 {
+fn remoteRun(ctx: *App.Ctx, a: cli.Args(RemoteSpec)) anyerror!u8 {
     try ctx.out.print("remote (no subcommand given, verbose={})\n", .{a.verbose});
     return 0;
 }
 
 const AddSpec = struct {
-    name: cli.spec.Pos([]const u8, .{ .help = "remote name" }),
-    url: cli.spec.Opt([]const u8, .{ .help = "remote URL", .value_name = "URL" }),
+    name: cli.Pos([]const u8, .{ .help = "remote name" }),
+    url: cli.Opt([]const u8, .{ .help = "remote URL", .value_name = "URL" }),
 };
 
-fn addRun(ctx: *App.Ctx, a: cli.args.Args(AddSpec)) anyerror!u8 {
+fn addRun(ctx: *App.Ctx, a: cli.Args(AddSpec)) anyerror!u8 {
     try ctx.out.print("added {s} -> {s}\n", .{ a.name, a.url orelse "(no url)" });
     return 0;
 }

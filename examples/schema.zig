@@ -8,19 +8,19 @@ const cli = @import("cli");
 
 const Group = enum { general };
 
-fn loadContext(_: std.mem.Allocator, _: std.Io, _: *cli.args.Diagnostic) anyerror!void {}
+fn loadContext(_: std.mem.Allocator, _: std.Io, _: *cli.Diagnostic) anyerror!void {}
 
-const App = cli.cli.Cli(.{
+const App = cli.App(.{
     .Context = void,
     .Group = Group,
     .loadContext = loadContext,
 });
 
 const DeploySpec = struct {
-    env: cli.spec.Opt([]const u8, .{ .help = "target environment", .complete = .{ .choices = &.{ "dev", "staging", "prod" } } }),
+    env: cli.Opt([]const u8, .{ .help = "target environment", .complete = .{ .choices = &.{ "dev", "staging", "prod" } } }),
 };
 
-fn deployRun(_: *App.Ctx, _: cli.args.Args(DeploySpec)) anyerror!u8 {
+fn deployRun(_: *App.Ctx, _: cli.Args(DeploySpec)) anyerror!u8 {
     return 0;
 }
 

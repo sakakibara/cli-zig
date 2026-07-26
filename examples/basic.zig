@@ -6,21 +6,21 @@ const cli = @import("cli");
 
 const Group = enum { general };
 
-fn loadContext(_: std.mem.Allocator, _: std.Io, _: *cli.args.Diagnostic) anyerror!void {}
+fn loadContext(_: std.mem.Allocator, _: std.Io, _: *cli.Diagnostic) anyerror!void {}
 
-const App = cli.cli.Cli(.{
+const App = cli.App(.{
     .Context = void,
     .Group = Group,
     .loadContext = loadContext,
 });
 
 const GreetSpec = struct {
-    verbose: cli.spec.Flag(.{ .short = 'v', .help = "print an extra detail line" }),
-    port: cli.spec.Opt(u16, .{ .short = 'p', .help = "port to greet on", .value_name = "PORT" }),
-    name: cli.spec.Pos([]const u8, .{ .help = "who to greet" }),
+    verbose: cli.Flag(.{ .short = 'v', .help = "print an extra detail line" }),
+    port: cli.Opt(u16, .{ .short = 'p', .help = "port to greet on", .value_name = "PORT" }),
+    name: cli.Pos([]const u8, .{ .help = "who to greet" }),
 };
 
-fn greetRun(ctx: *App.Ctx, a: cli.args.Args(GreetSpec)) anyerror!u8 {
+fn greetRun(ctx: *App.Ctx, a: cli.Args(GreetSpec)) anyerror!u8 {
     try ctx.out.print("hello, {s}\n", .{a.name});
     if (a.verbose) {
         try ctx.out.print("  (port={d})\n", .{a.port orelse 0});

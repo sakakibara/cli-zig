@@ -1,4 +1,4 @@
-//! Comptime-parameterized command dispatcher. `Cli(cfg)` monomorphizes a
+//! Comptime-parameterized command dispatcher. `App(cfg)` monomorphizes a
 //! `Ctx`/`Command`/`run` for one app's context type and help-grouping enum,
 //! so a command only ever implements its own `run`.
 const std = @import("std");
@@ -123,9 +123,9 @@ fn editDistance(a: []const u8, b: []const u8) usize {
 /// that message is the app's own to own, reclaimed for free by the process
 /// exit that follows a terminal load failure. `cfg` is a comptime struct
 /// literal (its field values carry their own concrete types), not a named
-/// type, so `Cli` can build `Ctx`/`Command` around whatever `Context` and
+/// type, so `App` can build `Ctx`/`Command` around whatever `Context` and
 /// `Group` the caller supplies.
-pub fn Cli(comptime cfg: anytype) type {
+pub fn App(comptime cfg: anytype) type {
     return struct {
         /// Per-dispatch state handed to a command's `run`. `context` is
         /// populated only for commands that declare `needs_context`.
@@ -167,7 +167,7 @@ pub fn Cli(comptime cfg: anytype) type {
         /// Produces shell-completion candidates from `Command`/`Flag`/`Arg`
         /// alone, the same metadata help renders from.
         const Completion = complete.Completion(Command, Flag, Arg, Ctx);
-        /// The dynamic-completion resolver hook type for this `Cli(cfg)`.
+        /// The dynamic-completion resolver hook type for this `App(cfg)`.
         /// See `complete.Completion.Resolve`.
         pub const CompletionResolve = Completion.Resolve;
         /// Writes a completion reply for `words` to a writer. See
@@ -182,7 +182,7 @@ pub fn Cli(comptime cfg: anytype) type {
         const Schema = schema.Emitter(Command, Flag, Arg, cfg.Group);
 
         /// Adapts `cfg.resolveCompletion` (whose `ctx` param is `anytype`,
-        /// since `Ctx` cannot be named from outside `Cli(cfg)`, the same
+        /// since `Ctx` cannot be named from outside `App(cfg)`, the same
         /// reason `makeSource` takes `anytype`) into a concrete `CompletionResolve`
         /// function pointer closed over this `Ctx`.
         const ResolveAdapter = struct {
@@ -220,7 +220,7 @@ pub fn Cli(comptime cfg: anytype) type {
             null;
 
         /// Adapts `cfg.renderTopHelp` (whose `commands` param is `anytype`,
-        /// since `Command` cannot be named from outside `Cli(cfg)`, the same
+        /// since `Command` cannot be named from outside `App(cfg)`, the same
         /// reason `ResolveAdapter` wraps `resolveCompletion`) into a
         /// concrete-typed function pointer closed over this `Command`.
         const RenderTopAdapter = struct {
@@ -754,17 +754,17 @@ pub fn Cli(comptime cfg: anytype) type {
 
 fn testNoopLoadContext(_: std.mem.Allocator, _: std.Io, _: *args.Diagnostic) anyerror!void {}
 
-test "Cli.run routes argv to a registered command" {
-    const TestCli = Cli(.{
+test "App.run routes argv to a registered command" {
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "hello",
         .group = .general,
         .run = struct {
-            fn r(ctx: *TestCli.Ctx) anyerror!u8 {
+            fn r(ctx: *TestApp.Ctx) anyerror!u8 {
                 try ctx.out.writeAll("hi\n");
                 return 0;
             }
@@ -776,22 +776,22 @@ test "Cli.run routes argv to a registered command" {
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "hello" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "hello" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     try std.testing.expectEqualStrings("hi\n", out_w.buffered());
 }
 
-test "Cli.run reports an unknown command with exit code 2" {
-    const TestCli = Cli(.{
+test "App.run reports an unknown command with exit code 2" {
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "hello",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -802,22 +802,22 @@ test "Cli.run reports an unknown command with exit code 2" {
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "bogus" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "bogus" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 2), code);
     try std.testing.expectEqualStrings("unknown command \"bogus\" (did you mean \"hello\"?)\n", err_w.buffered());
 }
 
-test "Cli.run suggests the nearest registered command name on a typo" {
-    const TestCli = Cli(.{
+test "App.run suggests the nearest registered command name on a typo" {
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "status",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -830,7 +830,7 @@ test "Cli.run suggests the nearest registered command name on a typo" {
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
 
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", typo }, &.{cmd}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", typo }, &.{cmd}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 2), code);
         const expected = try std.fmt.allocPrint(std.testing.allocator, "unknown command \"{s}\" (did you mean \"status\"?)\n", .{typo});
         defer std.testing.allocator.free(expected);
@@ -838,8 +838,8 @@ test "Cli.run suggests the nearest registered command name on a typo" {
     }
 }
 
-test "Cli.run reports the plain unknown-command form when no command is registered" {
-    const TestCli = Cli(.{
+test "App.run reports the plain unknown-command form when no command is registered" {
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
@@ -850,7 +850,7 @@ test "Cli.run reports the plain unknown-command form when no command is register
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "anything" }, &.{}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "anything" }, &.{}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 2), code);
     try std.testing.expectEqualStrings("unknown command \"anything\"\n", err_w.buffered());
 }
@@ -868,18 +868,18 @@ test "editDistance: degrades to the length difference past the 31-byte row cap" 
     try std.testing.expectEqual(@as(usize, 8), editDistance(long_a, long_b));
 }
 
-test "Cli.run renders top-level help grouped by command when no command is given" {
-    const TestCli = Cli(.{
+test "App.run renders top-level help grouped by command when no command is given" {
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general, extra },
         .loadContext = testNoopLoadContext,
     });
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "hello",
         .summary = "says hi",
         .group = .extra,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -890,7 +890,7 @@ test "Cli.run renders top-level help grouped by command when no command is given
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{"app"}, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{"app"}, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     const out = out_w.buffered();
     try std.testing.expect(std.mem.indexOf(u8, out, "extra:") != null);
@@ -898,17 +898,17 @@ test "Cli.run renders top-level help grouped by command when no command is given
     try std.testing.expect(std.mem.indexOf(u8, out, "says hi") != null);
 }
 
-test "Cli.run shows top-level help when --help or -h is the first argument" {
-    const TestCli = Cli(.{
+test "App.run shows top-level help when --help or -h is the first argument" {
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "hello",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -920,23 +920,23 @@ test "Cli.run shows top-level help when --help or -h is the first argument" {
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
 
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", flag_arg }, &.{cmd}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", flag_arg }, &.{cmd}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "hello") != null);
     }
 }
 
-test "Cli.run dispatches --version and -v to the registered version command" {
-    const TestCli = Cli(.{
+test "App.run dispatches --version and -v to the registered version command" {
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
-    const version_cmd = TestCli.Command{
+    const version_cmd = TestApp.Command{
         .name = "version",
         .group = .general,
         .run = struct {
-            fn r(ctx: *TestCli.Ctx) anyerror!u8 {
+            fn r(ctx: *TestApp.Ctx) anyerror!u8 {
                 try ctx.out.writeAll("myapp 1.2.3\n");
                 return 0;
             }
@@ -949,23 +949,23 @@ test "Cli.run dispatches --version and -v to the registered version command" {
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
 
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", flag_arg }, &.{version_cmd}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", flag_arg }, &.{version_cmd}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqualStrings("myapp 1.2.3\n", out_w.buffered());
     }
 }
 
-test "Cli.run treats --version as an unknown command when no version command is registered, with no suggestion since it is flag-shaped" {
-    const TestCli = Cli(.{
+test "App.run treats --version as an unknown command when no version command is registered, with no suggestion since it is flag-shaped" {
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "hello",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -976,7 +976,7 @@ test "Cli.run treats --version as an unknown command when no version command is 
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "--version" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "--version" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 2), code);
     try std.testing.expectEqualStrings("unknown command \"--version\"\n", err_w.buffered());
 }
@@ -988,7 +988,7 @@ const GreetSpec = struct {
 };
 
 test "command() trampoline parses argv into typed values and calls run_fn" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
@@ -999,7 +999,7 @@ test "command() trampoline parses argv into typed values and calls run_fn" {
         var seen_port: ?u16 = null;
         var seen_name: []const u8 = "";
 
-        fn r(_: *TestCli.Ctx, a: args.Args(GreetSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, a: args.Args(GreetSpec)) anyerror!u8 {
             seen_verbose = a.verbose;
             seen_port = a.port;
             seen_name = a.name;
@@ -1007,7 +1007,7 @@ test "command() trampoline parses argv into typed values and calls run_fn" {
         }
     };
 
-    const cmd = TestCli.command(GreetSpec, .{
+    const cmd = TestApp.command(GreetSpec, .{
         .name = "greet",
         .group = .general,
         .usage = "app greet [-v] [-p port] <name>",
@@ -1018,7 +1018,7 @@ test "command() trampoline parses argv into typed values and calls run_fn" {
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "greet", "-v", "-p", "9090", "world" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "greet", "-v", "-p", "9090", "world" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     try std.testing.expect(S.seen_verbose);
     try std.testing.expectEqual(@as(?u16, 9090), S.seen_port);
@@ -1026,19 +1026,19 @@ test "command() trampoline parses argv into typed values and calls run_fn" {
 }
 
 test "command() trampoline reports a bad parse to ctx.err and returns code 2" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
     const S = struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
             return 0;
         }
     };
 
-    const cmd = TestCli.command(GreetSpec, .{
+    const cmd = TestApp.command(GreetSpec, .{
         .name = "greet",
         .group = .general,
         .usage = "app greet [-v] [-p port] <name>",
@@ -1051,7 +1051,7 @@ test "command() trampoline reports a bad parse to ctx.err and returns code 2" {
 
     // No "name" positional given -> parseInto reports a required-argument
     // UsageError, which the trampoline turns into a code-2 diagnostic.
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "greet" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "greet" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 2), code);
     try std.testing.expect(err_w.buffered().len != 0);
     try std.testing.expect(std.mem.indexOf(u8, err_w.buffered(), "name") != null);
@@ -1062,19 +1062,19 @@ const FilesSpec = struct {
 };
 
 test "command() trampoline frees parse-owned memory via a per-dispatch arena" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
     const S = struct {
-        fn r(_: *TestCli.Ctx, a: args.Args(FilesSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, a: args.Args(FilesSpec)) anyerror!u8 {
             return @intCast(a.files.len);
         }
     };
 
-    const cmd = TestCli.command(FilesSpec, .{
+    const cmd = TestApp.command(FilesSpec, .{
         .name = "files",
         .group = .general,
         .usage = "app files -- <files...>",
@@ -1087,24 +1087,24 @@ test "command() trampoline frees parse-owned memory via a per-dispatch arena" {
 
     // The Rest field's slice is alloc-owned by parseInto; std.testing.allocator
     // (as ctx.alloc, backing the trampoline's arena) fails the test on any leak.
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "files", "--", "a", "b", "c" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "files", "--", "a", "b", "c" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 3), code);
 }
 
 test "command() derives Flag/Arg metadata matching the Spec" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
     const S = struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
             return 0;
         }
     };
 
-    const cmd = TestCli.command(GreetSpec, .{
+    const cmd = TestApp.command(GreetSpec, .{
         .name = "greet",
         .group = .general,
         .usage = "app greet [-v] [-p port] <name>",
@@ -1134,19 +1134,19 @@ const KebabSpec = struct {
 };
 
 test "command() derives a kebab-case long flag from a multi-word field name" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
     const S = struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(KebabSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, _: args.Args(KebabSpec)) anyerror!u8 {
             return 0;
         }
     };
 
-    const cmd = TestCli.command(KebabSpec, .{
+    const cmd = TestApp.command(KebabSpec, .{
         .name = "rename",
         .group = .general,
     }, S.r);
@@ -1161,7 +1161,7 @@ const ExclusiveSpec = struct {
 };
 
 test "command() trampoline enforces About.exclusive and never calls run_fn on conflict" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
@@ -1170,13 +1170,13 @@ test "command() trampoline enforces About.exclusive and never calls run_fn on co
     const S = struct {
         var called: bool = false;
 
-        fn r(_: *TestCli.Ctx, _: args.Args(ExclusiveSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, _: args.Args(ExclusiveSpec)) anyerror!u8 {
             called = true;
             return 0;
         }
     };
 
-    const cmd = TestCli.command(ExclusiveSpec, .{
+    const cmd = TestApp.command(ExclusiveSpec, .{
         .name = "ex",
         .group = .general,
         .exclusive = &.{&.{ "a", "b" }},
@@ -1189,7 +1189,7 @@ test "command() trampoline enforces About.exclusive and never calls run_fn on co
         var err_buf: [128]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
 
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "ex", "--a", "x", "--b", "y" }, &.{cmd}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "ex", "--a", "x", "--b", "y" }, &.{cmd}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 2), code);
         try std.testing.expect(!S.called);
         try std.testing.expect(std.mem.indexOf(u8, err_w.buffered(), "--a and --b are mutually exclusive") != null);
@@ -1202,7 +1202,7 @@ test "command() trampoline enforces About.exclusive and never calls run_fn on co
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
 
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "ex", "--a", "x" }, &.{cmd}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "ex", "--a", "x" }, &.{cmd}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expect(S.called);
     }
@@ -1221,18 +1221,18 @@ test "run loads the context only for commands that declare needs_context" {
     };
     S.load_count = 0;
 
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = ContextSentinel,
         .Group = enum { general },
         .loadContext = S.loadContext,
     });
 
-    const with_ctx = TestCli.Command{
+    const with_ctx = TestApp.Command{
         .name = "with",
         .group = .general,
         .needs_context = true,
         .run = struct {
-            fn r(ctx: *TestCli.Ctx) anyerror!u8 {
+            fn r(ctx: *TestApp.Ctx) anyerror!u8 {
                 if (ctx.context) |c| {
                     try ctx.out.print("id={d}\n", .{c.id});
                 } else {
@@ -1243,12 +1243,12 @@ test "run loads the context only for commands that declare needs_context" {
         }.r,
     };
 
-    const without_ctx = TestCli.Command{
+    const without_ctx = TestApp.Command{
         .name = "without",
         .group = .general,
         .needs_context = false,
         .run = struct {
-            fn r(ctx: *TestCli.Ctx) anyerror!u8 {
+            fn r(ctx: *TestApp.Ctx) anyerror!u8 {
                 try ctx.out.writeAll(if (ctx.context == null) "null\n" else "not-null\n");
                 return 0;
             }
@@ -1263,7 +1263,7 @@ test "run loads the context only for commands that declare needs_context" {
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
 
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "with" }, commands, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "with" }, commands, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqual(@as(u32, 1), S.load_count);
         try std.testing.expectEqualStrings("id=42\n", out_w.buffered());
@@ -1275,7 +1275,7 @@ test "run loads the context only for commands that declare needs_context" {
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
 
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "without" }, commands, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "without" }, commands, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqual(@as(u32, 1), S.load_count);
         try std.testing.expectEqualStrings("null\n", out_w.buffered());
@@ -1289,18 +1289,18 @@ test "run reports a loadContext error to ctx.err and returns exit code 1" {
         }
     };
 
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = ContextSentinel,
         .Group = enum { general },
         .loadContext = S.loadContext,
     });
 
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "with",
         .group = .general,
         .needs_context = true,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -1311,13 +1311,13 @@ test "run reports a loadContext error to ctx.err and returns exit code 1" {
     var err_buf: [128]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "with" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "with" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 1), code);
     try std.testing.expect(err_w.buffered().len != 0);
 }
 
 test "run's describeError hook prints its message instead of error: <name> for a command-body error" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
@@ -1328,11 +1328,11 @@ test "run's describeError hook prints its message instead of error: <name> for a
         }.f,
     });
 
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "boom",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return error.Boom;
             }
         }.r,
@@ -1343,13 +1343,13 @@ test "run's describeError hook prints its message instead of error: <name> for a
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "boom" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "boom" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 1), code);
     try std.testing.expectEqualStrings("the boom failed\n", err_w.buffered());
 }
 
 test "run's describeError hook can format dynamic content with the allocator it is handed, with no leak under std.testing.allocator" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
@@ -1360,11 +1360,11 @@ test "run's describeError hook can format dynamic content with the allocator it 
         }.f,
     });
 
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "boom",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return error.Sprocket;
             }
         }.r,
@@ -1378,13 +1378,13 @@ test "run's describeError hook can format dynamic content with the allocator it 
     // std.testing.allocator fails this test on any leak; the arena
     // reportError scopes around the describeError call must free the
     // allocPrint'd message after printing it.
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "boom" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "boom" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 1), code);
     try std.testing.expectEqualStrings("internal error: Sprocket\n", err_w.buffered());
 }
 
 test "run falls back to error: <name> when describeError returns an empty string" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
@@ -1395,11 +1395,11 @@ test "run falls back to error: <name> when describeError returns an empty string
         }.f,
     });
 
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "boom",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return error.Boom;
             }
         }.r,
@@ -1410,7 +1410,7 @@ test "run falls back to error: <name> when describeError returns an empty string
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "boom" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "boom" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 1), code);
     try std.testing.expectEqualStrings("error: Boom\n", err_w.buffered());
 }
@@ -1422,7 +1422,7 @@ test "run falls back to failed to load context: <name> when describeError return
         }
     };
 
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = ContextSentinel,
         .Group = enum { general },
         .loadContext = S.loadContext,
@@ -1433,12 +1433,12 @@ test "run falls back to failed to load context: <name> when describeError return
         }.f,
     });
 
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "with",
         .group = .general,
         .needs_context = true,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -1449,23 +1449,23 @@ test "run falls back to failed to load context: <name> when describeError return
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "with" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "with" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 1), code);
     try std.testing.expectEqualStrings("failed to load context: Boom\n", err_w.buffered());
 }
 
 test "run falls back to error: <name> when describeError is absent" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "boom",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return error.Boom;
             }
         }.r,
@@ -1476,7 +1476,7 @@ test "run falls back to error: <name> when describeError is absent" {
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "boom" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "boom" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 1), code);
     try std.testing.expectEqualStrings("error: Boom\n", err_w.buffered());
 }
@@ -1489,18 +1489,18 @@ test "run prints diag.message from a failing loadContext instead of the errorNam
         }
     };
 
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = ContextSentinel,
         .Group = enum { general },
         .loadContext = S.loadContext,
     });
 
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "with",
         .group = .general,
         .needs_context = true,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -1511,13 +1511,13 @@ test "run prints diag.message from a failing loadContext instead of the errorNam
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "with" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "with" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 1), code);
     try std.testing.expectEqualStrings("config.toml:3 bad\n", err_w.buffered());
 }
 
 test "run's --version dispatch consults describeError the same way as a normal command" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
@@ -1528,11 +1528,11 @@ test "run's --version dispatch consults describeError the same way as a normal c
         }.f,
     });
 
-    const version_cmd = TestCli.Command{
+    const version_cmd = TestApp.Command{
         .name = "version",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return error.Boom;
             }
         }.r,
@@ -1543,13 +1543,13 @@ test "run's --version dispatch consults describeError the same way as a normal c
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "--version" }, &.{version_cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "--version" }, &.{version_cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 1), code);
     try std.testing.expectEqualStrings("the boom failed\n", err_w.buffered());
 }
 
 test "command() trampoline reports a bad typed-option value and never calls run_fn" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
@@ -1558,13 +1558,13 @@ test "command() trampoline reports a bad typed-option value and never calls run_
     const S = struct {
         var called: bool = false;
 
-        fn r(_: *TestCli.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
             called = true;
             return 0;
         }
     };
 
-    const cmd = TestCli.command(GreetSpec, .{
+    const cmd = TestApp.command(GreetSpec, .{
         .name = "greet",
         .group = .general,
         .usage = "app greet [-v] [-p port] <name>",
@@ -1577,7 +1577,7 @@ test "command() trampoline reports a bad typed-option value and never calls run_
 
     // "-p xyz" fails resolve.parseValue(u16, "xyz") -> UsageError before
     // run_fn is ever reached.
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "greet", "-p", "xyz", "world" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "greet", "-p", "xyz", "world" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 2), code);
     try std.testing.expect(err_w.buffered().len != 0);
     try std.testing.expect(std.mem.indexOf(u8, err_w.buffered(), "requires an integer") != null);
@@ -1585,47 +1585,47 @@ test "command() trampoline reports a bad typed-option value and never calls run_
 }
 
 test "run dispatches one level of nested subcommands by name, and a bare top-level command still works" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
-    const sub1 = TestCli.Command{
+    const sub1 = TestApp.Command{
         .name = "sub1",
         .group = .general,
         .run = struct {
-            fn r(ctx: *TestCli.Ctx) anyerror!u8 {
+            fn r(ctx: *TestApp.Ctx) anyerror!u8 {
                 try ctx.out.writeAll("sub1\n");
                 return 0;
             }
         }.r,
     };
-    const sub2 = TestCli.Command{
+    const sub2 = TestApp.Command{
         .name = "sub2",
         .group = .general,
         .run = struct {
-            fn r(ctx: *TestCli.Ctx) anyerror!u8 {
+            fn r(ctx: *TestApp.Ctx) anyerror!u8 {
                 try ctx.out.writeAll("sub2\n");
                 return 0;
             }
         }.r,
     };
-    const group = TestCli.Command{
+    const group = TestApp.Command{
         .name = "group",
         .group = .general,
         .subcommands = &.{ sub1, sub2 },
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
     };
-    const plain = TestCli.Command{
+    const plain = TestApp.Command{
         .name = "plain",
         .group = .general,
         .run = struct {
-            fn r(ctx: *TestCli.Ctx) anyerror!u8 {
+            fn r(ctx: *TestApp.Ctx) anyerror!u8 {
                 try ctx.out.writeAll("plain\n");
                 return 0;
             }
@@ -1639,7 +1639,7 @@ test "run dispatches one level of nested subcommands by name, and a bare top-lev
         var out_w = std.Io.Writer.fixed(&out_buf);
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "group", "sub1" }, commands, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "group", "sub1" }, commands, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqualStrings("sub1\n", out_w.buffered());
     }
@@ -1649,7 +1649,7 @@ test "run dispatches one level of nested subcommands by name, and a bare top-lev
         var out_w = std.Io.Writer.fixed(&out_buf);
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "group", "sub2" }, commands, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "group", "sub2" }, commands, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqualStrings("sub2\n", out_w.buffered());
     }
@@ -1659,37 +1659,37 @@ test "run dispatches one level of nested subcommands by name, and a bare top-lev
         var out_w = std.Io.Writer.fixed(&out_buf);
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "plain" }, commands, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "plain" }, commands, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqualStrings("plain\n", out_w.buffered());
     }
 }
 
 test "run lets a parent with subcommands handle a flag-shaped or unmatched next token itself" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
-    const sub = TestCli.Command{
+    const sub = TestApp.Command{
         .name = "sub",
         .group = .general,
         .usage = "app parent sub [flags]",
         .run = struct {
-            fn r(ctx: *TestCli.Ctx) anyerror!u8 {
+            fn r(ctx: *TestApp.Ctx) anyerror!u8 {
                 try ctx.out.writeAll("sub\n");
                 return 0;
             }
         }.r,
     };
-    const parent = TestCli.Command{
+    const parent = TestApp.Command{
         .name = "parent",
         .group = .general,
         .usage = "app parent [flags]",
         .subcommands = &.{sub},
         .run = struct {
-            fn r(ctx: *TestCli.Ctx) anyerror!u8 {
+            fn r(ctx: *TestApp.Ctx) anyerror!u8 {
                 for (ctx.argv) |a| {
                     try ctx.out.writeAll(a);
                     try ctx.out.writeAll("\n");
@@ -1705,7 +1705,7 @@ test "run lets a parent with subcommands handle a flag-shaped or unmatched next 
         var out_w = std.Io.Writer.fixed(&out_buf);
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "parent", "--help" }, &.{parent}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "parent", "--help" }, &.{parent}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expect(std.mem.startsWith(u8, out_w.buffered(), "Usage: app parent [flags]\n"));
     }
@@ -1716,7 +1716,7 @@ test "run lets a parent with subcommands handle a flag-shaped or unmatched next 
         var out_w = std.Io.Writer.fixed(&out_buf);
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "parent", "sub" }, &.{parent}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "parent", "sub" }, &.{parent}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqualStrings("sub\n", out_w.buffered());
     }
@@ -1727,7 +1727,7 @@ test "run lets a parent with subcommands handle a flag-shaped or unmatched next 
         var out_w = std.Io.Writer.fixed(&out_buf);
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "parent", "sub", "--help" }, &.{parent}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "parent", "sub", "--help" }, &.{parent}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expect(std.mem.startsWith(u8, out_w.buffered(), "Usage: app parent sub [flags]\n"));
     }
@@ -1739,7 +1739,7 @@ test "run lets a parent with subcommands handle a flag-shaped or unmatched next 
         var out_w = std.Io.Writer.fixed(&out_buf);
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "parent", "bogus" }, &.{parent}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "parent", "bogus" }, &.{parent}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqualStrings("bogus\n", out_w.buffered());
     }
@@ -1756,18 +1756,18 @@ test "run gates context loading on the resolved leaf command, not its parent" {
     };
     S.load_count = 0;
 
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = ContextSentinel,
         .Group = enum { general },
         .loadContext = S.loadContext,
     });
 
-    const needs_ctx_sub = TestCli.Command{
+    const needs_ctx_sub = TestApp.Command{
         .name = "sub",
         .group = .general,
         .needs_context = true,
         .run = struct {
-            fn r(ctx: *TestCli.Ctx) anyerror!u8 {
+            fn r(ctx: *TestApp.Ctx) anyerror!u8 {
                 if (ctx.context) |c| {
                     try ctx.out.print("id={d}\n", .{c.id});
                 } else {
@@ -1777,11 +1777,11 @@ test "run gates context loading on the resolved leaf command, not its parent" {
             }
         }.r,
     };
-    const plain_sub = TestCli.Command{
+    const plain_sub = TestApp.Command{
         .name = "plain",
         .group = .general,
         .run = struct {
-            fn r(ctx: *TestCli.Ctx) anyerror!u8 {
+            fn r(ctx: *TestApp.Ctx) anyerror!u8 {
                 try ctx.out.writeAll(if (ctx.context == null) "null\n" else "not-null\n");
                 return 0;
             }
@@ -1790,13 +1790,13 @@ test "run gates context loading on the resolved leaf command, not its parent" {
     // The parent itself declares needs_context = false: if the gate ran on
     // the parent instead of the resolved leaf, "sub" would wrongly see a
     // null context and "plain" would wrongly trigger a load.
-    const group = TestCli.Command{
+    const group = TestApp.Command{
         .name = "group",
         .group = .general,
         .needs_context = false,
         .subcommands = &.{ needs_ctx_sub, plain_sub },
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -1808,7 +1808,7 @@ test "run gates context loading on the resolved leaf command, not its parent" {
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
 
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "group", "sub" }, &.{group}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "group", "sub" }, &.{group}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqual(@as(u32, 1), S.load_count);
         try std.testing.expectEqualStrings("id=7\n", out_w.buffered());
@@ -1820,7 +1820,7 @@ test "run gates context loading on the resolved leaf command, not its parent" {
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
 
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "group", "plain" }, &.{group}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "group", "plain" }, &.{group}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqual(@as(u32, 1), S.load_count);
         try std.testing.expectEqualStrings("null\n", out_w.buffered());
@@ -1828,7 +1828,7 @@ test "run gates context loading on the resolved leaf command, not its parent" {
 }
 
 test "run resolves a typed command() subcommand's own argv from argv[3..]" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
@@ -1837,24 +1837,24 @@ test "run resolves a typed command() subcommand's own argv from argv[3..]" {
     const S = struct {
         var seen_port: ?u16 = null;
 
-        fn r(_: *TestCli.Ctx, a: args.Args(GreetSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, a: args.Args(GreetSpec)) anyerror!u8 {
             seen_port = a.port;
             return 0;
         }
     };
 
-    const sub = TestCli.command(GreetSpec, .{
+    const sub = TestApp.command(GreetSpec, .{
         .name = "sub",
         .group = .general,
         .usage = "app group sub [-v] [-p port] <name>",
     }, S.r);
 
-    const group = TestCli.Command{
+    const group = TestApp.Command{
         .name = "group",
         .group = .general,
         .subcommands = &.{sub},
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -1865,7 +1865,7 @@ test "run resolves a typed command() subcommand's own argv from argv[3..]" {
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "group", "sub", "-p", "5", "world" }, &.{group}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "group", "sub", "-p", "5", "world" }, &.{group}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     try std.testing.expectEqual(@as(?u16, 5), S.seen_port);
 }
@@ -1876,19 +1876,19 @@ const ServeSpec = struct {
 };
 
 test "<cmd> --help shows the command's usage, a flag's help text, and its value_name" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
     const S = struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(ServeSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, _: args.Args(ServeSpec)) anyerror!u8 {
             return 0;
         }
     };
 
-    const cmd = TestCli.command(ServeSpec, .{
+    const cmd = TestApp.command(ServeSpec, .{
         .name = "serve",
         .group = .general,
         .usage = "app serve [-p PORT] <name>",
@@ -1899,7 +1899,7 @@ test "<cmd> --help shows the command's usage, a flag's help text, and its value_
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "serve", "--help" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "serve", "--help" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     const out = out_w.buffered();
     try std.testing.expect(std.mem.indexOf(u8, out, "app serve [-p PORT] <name>") != null);
@@ -1908,19 +1908,19 @@ test "<cmd> --help shows the command's usage, a flag's help text, and its value_
 }
 
 test "help <cmd> renders the same per-command help as <cmd> --help" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
     const S = struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(ServeSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, _: args.Args(ServeSpec)) anyerror!u8 {
             return 0;
         }
     };
 
-    const cmd = TestCli.command(ServeSpec, .{
+    const cmd = TestApp.command(ServeSpec, .{
         .name = "serve",
         .group = .general,
         .usage = "app serve [-p PORT] <name>",
@@ -1930,28 +1930,28 @@ test "help <cmd> renders the same per-command help as <cmd> --help" {
     var out_w_a = std.Io.Writer.fixed(&out_buf_a);
     var err_buf_a: [64]u8 = undefined;
     var err_w_a = std.Io.Writer.fixed(&err_buf_a);
-    _ = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "serve", "--help" }, &.{cmd}, &out_w_a, &err_w_a);
+    _ = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "serve", "--help" }, &.{cmd}, &out_w_a, &err_w_a);
 
     var out_buf_b: [512]u8 = undefined;
     var out_w_b = std.Io.Writer.fixed(&out_buf_b);
     var err_buf_b: [64]u8 = undefined;
     var err_w_b = std.Io.Writer.fixed(&err_buf_b);
-    _ = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "help", "serve" }, &.{cmd}, &out_w_b, &err_w_b);
+    _ = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "help", "serve" }, &.{cmd}, &out_w_b, &err_w_b);
 
     try std.testing.expectEqualStrings(out_w_a.buffered(), out_w_b.buffered());
 }
 
 test "help <cmd> reports an unknown command name the same way as the top-level path" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "status",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -1962,13 +1962,13 @@ test "help <cmd> reports an unknown command name the same way as the top-level p
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "help", "stauts" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "help", "stauts" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 2), code);
     try std.testing.expectEqualStrings("unknown command \"stauts\" (did you mean \"status\"?)\n", err_w.buffered());
 }
 
 test "suggestCommand's exact-prefix branch wins over a closer edit-distance candidate" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
@@ -1976,20 +1976,20 @@ test "suggestCommand's exact-prefix branch wins over a closer edit-distance cand
     // "stat" is an exact prefix of "status" (distance 2), but "stag" is
     // closer by edit distance (distance 1, one substitution). The prefix
     // branch is checked first, so "status" must win despite being farther.
-    const status_cmd = TestCli.Command{
+    const status_cmd = TestApp.Command{
         .name = "status",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
     };
-    const stag_cmd = TestCli.Command{
+    const stag_cmd = TestApp.Command{
         .name = "stag",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -2000,7 +2000,7 @@ test "suggestCommand's exact-prefix branch wins over a closer edit-distance cand
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "stat" }, &.{ stag_cmd, status_cmd }, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "stat" }, &.{ stag_cmd, status_cmd }, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 2), code);
     try std.testing.expectEqualStrings("unknown command \"stat\" (did you mean \"status\"?)\n", err_w.buffered());
 }
@@ -2016,18 +2016,18 @@ test "run loads context for a version command that declares needs_context" {
     };
     S.load_count = 0;
 
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = ContextSentinel,
         .Group = enum { general },
         .loadContext = S.loadContext,
     });
 
-    const version_cmd = TestCli.Command{
+    const version_cmd = TestApp.Command{
         .name = "version",
         .group = .general,
         .needs_context = true,
         .run = struct {
-            fn r(ctx: *TestCli.Ctx) anyerror!u8 {
+            fn r(ctx: *TestApp.Ctx) anyerror!u8 {
                 if (ctx.context) |c| {
                     try ctx.out.print("id={d}\n", .{c.id});
                 } else {
@@ -2043,14 +2043,14 @@ test "run loads context for a version command that declares needs_context" {
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "--version" }, &.{version_cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "--version" }, &.{version_cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     try std.testing.expectEqual(@as(u32, 1), S.load_count);
     try std.testing.expectEqualStrings("id=99\n", out_w.buffered());
 }
 
 test "run falls back to error: <name> when describeError is present but returns null for the thrown error" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
@@ -2061,11 +2061,11 @@ test "run falls back to error: <name> when describeError is present but returns 
         }.f,
     });
 
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "boom",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return error.Boom;
             }
         }.r,
@@ -2076,7 +2076,7 @@ test "run falls back to error: <name> when describeError is present but returns 
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "boom" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "boom" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 1), code);
     try std.testing.expectEqualStrings("error: Boom\n", err_w.buffered());
 }
@@ -2088,7 +2088,7 @@ test "run's loadContext failure with an empty diag.message falls back to describ
         }
     };
 
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = ContextSentinel,
         .Group = enum { general },
         .loadContext = S.loadContext,
@@ -2099,12 +2099,12 @@ test "run's loadContext failure with an empty diag.message falls back to describ
         }.f,
     });
 
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "with",
         .group = .general,
         .needs_context = true,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -2115,13 +2115,13 @@ test "run's loadContext failure with an empty diag.message falls back to describ
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "with" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "with" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 1), code);
     try std.testing.expectEqualStrings("context load failed: boom\n", err_w.buffered());
 }
 
 test "hasHelpFlag stops at -- so --help after it passes through, but --help before it shows help" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
@@ -2133,7 +2133,7 @@ test "hasHelpFlag stops at -- so --help after it passes through, but --help befo
         var seen0: []const u8 = "";
         var seen1: []const u8 = "";
 
-        fn r(_: *TestCli.Ctx, a: args.Args(FilesSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, a: args.Args(FilesSpec)) anyerror!u8 {
             called = true;
             seen_len = a.files.len;
             if (a.files.len > 0) seen0 = a.files[0];
@@ -2142,7 +2142,7 @@ test "hasHelpFlag stops at -- so --help after it passes through, but --help befo
         }
     };
 
-    const cmd = TestCli.command(FilesSpec, .{
+    const cmd = TestApp.command(FilesSpec, .{
         .name = "files",
         .group = .general,
         .usage = "app files -- <files...>",
@@ -2156,7 +2156,7 @@ test "hasHelpFlag stops at -- so --help after it passes through, but --help befo
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
 
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "files", "--", "--help", "x" }, &.{cmd}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "files", "--", "--help", "x" }, &.{cmd}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expect(S.called);
         try std.testing.expectEqual(@as(usize, 2), S.seen_len);
@@ -2172,7 +2172,7 @@ test "hasHelpFlag stops at -- so --help after it passes through, but --help befo
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
 
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "files", "--help" }, &.{cmd}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "files", "--help" }, &.{cmd}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expect(!S.called);
         try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "files") != null);
@@ -2180,17 +2180,17 @@ test "hasHelpFlag stops at -- so --help after it passes through, but --help befo
 }
 
 test "run renders a run_fn's own error to ctx.err and returns exit code 1" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "boom",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return error.Boom;
             }
         }.r,
@@ -2201,7 +2201,7 @@ test "run renders a run_fn's own error to ctx.err and returns exit code 1" {
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "boom" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "boom" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 1), code);
     try std.testing.expect(err_w.buffered().len != 0);
     try std.testing.expect(std.mem.indexOf(u8, err_w.buffered(), "Boom") != null);
@@ -2218,7 +2218,7 @@ fn regionEnv(k: []const u8) ?[]const u8 {
 test "run flows a cfg.makeSource env value through the trampoline; no makeSource keeps the empty source" {
     // With makeSource: env "region" resolves to "envval" even though argv omits it.
     {
-        const TestCli = Cli(.{
+        const TestApp = App(.{
             .Context = void,
             .Group = enum { general },
             .loadContext = testNoopLoadContext,
@@ -2231,28 +2231,28 @@ test "run flows a cfg.makeSource env value through the trampoline; no makeSource
 
         const S = struct {
             var seen: []const u8 = "";
-            fn r(_: *TestCli.Ctx, a: args.Args(RegionSpec)) anyerror!u8 {
+            fn r(_: *TestApp.Ctx, a: args.Args(RegionSpec)) anyerror!u8 {
                 seen = a.region orelse "";
                 return 0;
             }
         };
         S.seen = "";
 
-        const cmd = TestCli.command(RegionSpec, .{ .name = "cfg", .group = .general }, S.r);
+        const cmd = TestApp.command(RegionSpec, .{ .name = "cfg", .group = .general }, S.r);
 
         var out_buf: [64]u8 = undefined;
         var out_w = std.Io.Writer.fixed(&out_buf);
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
 
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "cfg" }, &.{cmd}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "cfg" }, &.{cmd}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqualStrings("envval", S.seen);
     }
 
     // Without makeSource: the empty source resolves the option to null.
     {
-        const TestCli = Cli(.{
+        const TestApp = App(.{
             .Context = void,
             .Group = enum { general },
             .loadContext = testNoopLoadContext,
@@ -2260,40 +2260,40 @@ test "run flows a cfg.makeSource env value through the trampoline; no makeSource
 
         const S = struct {
             var was_null: bool = false;
-            fn r(_: *TestCli.Ctx, a: args.Args(RegionSpec)) anyerror!u8 {
+            fn r(_: *TestApp.Ctx, a: args.Args(RegionSpec)) anyerror!u8 {
                 was_null = a.region == null;
                 return 0;
             }
         };
         S.was_null = false;
 
-        const cmd = TestCli.command(RegionSpec, .{ .name = "cfg", .group = .general }, S.r);
+        const cmd = TestApp.command(RegionSpec, .{ .name = "cfg", .group = .general }, S.r);
 
         var out_buf: [64]u8 = undefined;
         var out_w = std.Io.Writer.fixed(&out_buf);
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
 
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "cfg" }, &.{cmd}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "cfg" }, &.{cmd}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expect(S.was_null);
     }
 }
 
 test "command help synthesizes a usage line from the Spec when About.usage is empty" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
     const S = struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
             return 0;
         }
     };
 
-    const cmd = TestCli.command(GreetSpec, .{
+    const cmd = TestApp.command(GreetSpec, .{
         .name = "greet",
         .group = .general,
     }, S.r);
@@ -2303,7 +2303,7 @@ test "command help synthesizes a usage line from the Spec when About.usage is em
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "greet", "--help" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "greet", "--help" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     const out = out_w.buffered();
     try std.testing.expect(std.mem.indexOf(u8, out, "greet") != null);
@@ -2326,43 +2326,43 @@ fn cliTestResolveCompletion(alloc: std.mem.Allocator, key: []const u8, _: ?[]con
     return .{ .directive = .default, .candidates = try out.toOwnedSlice(alloc) };
 }
 
-test "Cli builds completion_resolve from cfg.resolveCompletion and feeds completionCompute" {
+test "App builds completion_resolve from cfg.resolveCompletion and feeds completionCompute" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
         .resolveCompletion = cliTestResolveCompletion,
     });
 
-    const cmd = TestCli.command(EnvSpec, .{ .name = "deploy", .group = .general }, struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(EnvSpec)) anyerror!u8 {
+    const cmd = TestApp.command(EnvSpec, .{ .name = "deploy", .group = .general }, struct {
+        fn r(_: *TestApp.Ctx, _: args.Args(EnvSpec)) anyerror!u8 {
             return 0;
         }
     }.r);
 
-    var ctx = TestCli.Ctx{ .alloc = arena, .io = std.testing.io, .out = undefined, .err = undefined };
-    const got = try TestCli.completionCompute(arena, &.{cmd}, &.{ "deploy", "--env", "st" }, TestCli.completion_resolve, &ctx);
+    var ctx = TestApp.Ctx{ .alloc = arena, .io = std.testing.io, .out = undefined, .err = undefined };
+    const got = try TestApp.completionCompute(arena, &.{cmd}, &.{ "deploy", "--env", "st" }, TestApp.completion_resolve, &ctx);
     try std.testing.expectEqual(@as(usize, 1), got.candidates.len);
     try std.testing.expectEqualStrings("staging", got.candidates[0].value);
 }
 
-test "Cli.completion_resolve is null when cfg has no resolveCompletion" {
-    const TestCli = Cli(.{
+test "App.completion_resolve is null when cfg has no resolveCompletion" {
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
-    try std.testing.expectEqual(@as(TestCli.CompletionResolve, null), TestCli.completion_resolve);
+    try std.testing.expectEqual(@as(TestApp.CompletionResolve, null), TestApp.completion_resolve);
 }
 
-const CliTestGroup = enum { general, system };
+const AppTestGroup = enum { general, system };
 
-fn cliTestGroupHeading(g: CliTestGroup) []const u8 {
+fn cliTestGroupHeading(g: AppTestGroup) []const u8 {
     return switch (g) {
         .general => "general",
         .system => "System tools",
@@ -2375,16 +2375,16 @@ fn cliTestHelpFooter(w: *std.Io.Writer, prog_name: []const u8) anyerror!void {
 }
 
 test "run forwards cfg.groupHeading and cfg.renderHelpFooter to renderTop on the no-command help path" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
-        .Group = CliTestGroup,
+        .Group = AppTestGroup,
         .loadContext = testNoopLoadContext,
         .groupHeading = cliTestGroupHeading,
         .renderHelpFooter = cliTestHelpFooter,
     });
 
-    const cmd = TestCli.command(GreetSpec, .{ .name = "greet", .group = .system }, struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
+    const cmd = TestApp.command(GreetSpec, .{ .name = "greet", .group = .system }, struct {
+        fn r(_: *TestApp.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
             return 0;
         }
     }.r);
@@ -2394,7 +2394,7 @@ test "run forwards cfg.groupHeading and cfg.renderHelpFooter to renderTop on the
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{"app"}, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{"app"}, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     const out = out_w.buffered();
     try std.testing.expect(std.mem.indexOf(u8, out, "System tools:") != null);
@@ -2402,16 +2402,16 @@ test "run forwards cfg.groupHeading and cfg.renderHelpFooter to renderTop on the
 }
 
 test "run forwards cfg.groupHeading and cfg.renderHelpFooter to renderTop on the bare help path" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
-        .Group = CliTestGroup,
+        .Group = AppTestGroup,
         .loadContext = testNoopLoadContext,
         .groupHeading = cliTestGroupHeading,
         .renderHelpFooter = cliTestHelpFooter,
     });
 
-    const cmd = TestCli.command(GreetSpec, .{ .name = "greet", .group = .system }, struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
+    const cmd = TestApp.command(GreetSpec, .{ .name = "greet", .group = .system }, struct {
+        fn r(_: *TestApp.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
             return 0;
         }
     }.r);
@@ -2421,7 +2421,7 @@ test "run forwards cfg.groupHeading and cfg.renderHelpFooter to renderTop on the
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "help" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "help" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     const out = out_w.buffered();
     try std.testing.expect(std.mem.indexOf(u8, out, "System tools:") != null);
@@ -2429,14 +2429,14 @@ test "run forwards cfg.groupHeading and cfg.renderHelpFooter to renderTop on the
 }
 
 test "run's top-level help keeps the built-in heading and footer when cfg has neither hook" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
-        .Group = CliTestGroup,
+        .Group = AppTestGroup,
         .loadContext = testNoopLoadContext,
     });
 
-    const cmd = TestCli.command(GreetSpec, .{ .name = "greet", .group = .system }, struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
+    const cmd = TestApp.command(GreetSpec, .{ .name = "greet", .group = .system }, struct {
+        fn r(_: *TestApp.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
             return 0;
         }
     }.r);
@@ -2446,7 +2446,7 @@ test "run's top-level help keeps the built-in heading and footer when cfg has ne
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{"app"}, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{"app"}, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     const out = out_w.buffered();
     try std.testing.expect(std.mem.indexOf(u8, out, "\nsystem:\n") != null);
@@ -2454,18 +2454,18 @@ test "run's top-level help keeps the built-in heading and footer when cfg has ne
 }
 
 test "run intercepts __complete and replies with matching command names" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
-    const cmd = TestCli.command(GreetSpec, .{
+    const cmd = TestApp.command(GreetSpec, .{
         .name = "greet",
         .group = .general,
         .usage = "app greet [-v] [-p port] <name>",
     }, struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
             return 0;
         }
     }.r);
@@ -2475,7 +2475,7 @@ test "run intercepts __complete and replies with matching command names" {
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "__complete", "gr" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "__complete", "gr" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     const out = out_w.buffered();
 
@@ -2489,18 +2489,18 @@ test "run intercepts __complete and replies with matching command names" {
 }
 
 test "run intercepts __complete and replies with a command's flag names after --" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
-    const cmd = TestCli.command(GreetSpec, .{
+    const cmd = TestApp.command(GreetSpec, .{
         .name = "greet",
         .group = .general,
         .usage = "app greet [-v] [-p port] <name>",
     }, struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
             return 0;
         }
     }.r);
@@ -2510,7 +2510,7 @@ test "run intercepts __complete and replies with a command's flag names after --
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "__complete", "greet", "--" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "__complete", "greet", "--" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     const out = out_w.buffered();
     try std.testing.expect(std.mem.indexOf(u8, out, "--verbose") != null);
@@ -2524,15 +2524,15 @@ test "run's __complete interception survives a failing loadContext and still rep
         }
     };
 
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = S.loadContext,
         .resolveCompletion = cliTestResolveCompletion,
     });
 
-    const cmd = TestCli.command(EnvSpec, .{ .name = "deploy", .group = .general }, struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(EnvSpec)) anyerror!u8 {
+    const cmd = TestApp.command(EnvSpec, .{ .name = "deploy", .group = .general }, struct {
+        fn r(_: *TestApp.Ctx, _: args.Args(EnvSpec)) anyerror!u8 {
             return 0;
         }
     }.r);
@@ -2542,24 +2542,24 @@ test "run's __complete interception survives a failing loadContext and still rep
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "__complete", "deploy", "--env", "st" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "__complete", "deploy", "--env", "st" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     try std.testing.expectEqualStrings("", err_w.buffered());
     try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "staging") != null);
 }
 
 test "run's __complete interception never reaches unknown-command handling, even with argv.len == 2" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "greet",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -2570,14 +2570,14 @@ test "run's __complete interception never reaches unknown-command handling, even
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "__complete" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "__complete" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     try std.testing.expectEqualStrings("", err_w.buffered());
     try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "greet") != null);
 }
 
 test "run intercepts completion <shell> and writes the shell's script to out" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
@@ -2588,7 +2588,7 @@ test "run intercepts completion <shell> and writes the shell's script to out" {
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "completion", "bash" }, &.{}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "completion", "bash" }, &.{}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     try std.testing.expectEqualStrings("", err_w.buffered());
     try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "app __complete") != null);
@@ -2596,7 +2596,7 @@ test "run intercepts completion <shell> and writes the shell's script to out" {
 }
 
 test "run's completion interception rejects an unknown shell with a code-2 diagnostic" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
@@ -2607,14 +2607,14 @@ test "run's completion interception rejects an unknown shell with a code-2 diagn
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "completion", "csh" }, &.{}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "completion", "csh" }, &.{}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 2), code);
     try std.testing.expectEqualStrings("", out_w.buffered());
     try std.testing.expect(err_w.buffered().len != 0);
 }
 
 test "run's completion interception rejects a missing shell argument with a code-2 diagnostic" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
@@ -2625,25 +2625,25 @@ test "run's completion interception rejects a missing shell argument with a code
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "completion" }, &.{}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "completion" }, &.{}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 2), code);
     try std.testing.expectEqualStrings("", out_w.buffered());
     try std.testing.expect(err_w.buffered().len != 0);
 }
 
 test "run intercepts __schema and writes the command table as a versioned JSON envelope" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
-    const cmd = TestCli.command(GreetSpec, .{
+    const cmd = TestApp.command(GreetSpec, .{
         .name = "greet",
         .group = .general,
         .usage = "app greet [-v] [-p port] <name>",
     }, struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
             return 0;
         }
     }.r);
@@ -2653,7 +2653,7 @@ test "run intercepts __schema and writes the command table as a versioned JSON e
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "__schema" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "__schema" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     try std.testing.expectEqualStrings("", err_w.buffered());
     const out = out_w.buffered();
@@ -2669,17 +2669,17 @@ const DeploySpec = struct {
 };
 
 test "__schema emits a command()-derived flag's .choices completer" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
-    const cmd = TestCli.command(DeploySpec, .{
+    const cmd = TestApp.command(DeploySpec, .{
         .name = "deploy",
         .group = .general,
     }, struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(DeploySpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, _: args.Args(DeploySpec)) anyerror!u8 {
             return 0;
         }
     }.r);
@@ -2689,24 +2689,24 @@ test "__schema emits a command()-derived flag's .choices completer" {
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "__schema" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "__schema" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     const out = out_w.buffered();
     try std.testing.expect(std.mem.indexOf(u8, out, "\"complete\":{\"kind\":\"choices\",\"values\":[\"dev\",\"staging\",\"prod\"]}") != null);
 }
 
 test "__schema is never shown in top-level help" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "greet",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -2717,35 +2717,35 @@ test "__schema is never shown in top-level help" {
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{"app"}, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{"app"}, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "__schema") == null);
 }
 
 test "help parent renders its own help and lists its subcommands with their summaries" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
-    const sub = TestCli.command(ServeSpec, .{
+    const sub = TestApp.command(ServeSpec, .{
         .name = "sub",
         .summary = "run the sub",
         .group = .general,
         .usage = "app grp sub [-p PORT] <name>",
     }, struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(ServeSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, _: args.Args(ServeSpec)) anyerror!u8 {
             return 0;
         }
     }.r);
 
-    const grp = TestCli.Command{
+    const grp = TestApp.Command{
         .name = "grp",
         .group = .general,
         .subcommands = &.{sub},
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -2759,34 +2759,34 @@ test "help parent renders its own help and lists its subcommands with their summ
     // grp's usage is synthesized (About.usage empty); having subcommands
     // makes the synopsis end in <command> and adds a Commands section that
     // lists each subcommand by name and summary.
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "help", "grp" }, &.{grp}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "help", "grp" }, &.{grp}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     try std.testing.expectEqualStrings("Usage: grp <command>\n\nCommands:\n  sub  run the sub\n", out_w.buffered());
 }
 
 test "help parent sub renders the subcommand's own help" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
-    const sub = TestCli.command(ServeSpec, .{
+    const sub = TestApp.command(ServeSpec, .{
         .name = "sub",
         .group = .general,
         .usage = "app grp sub [-p PORT] <name>",
     }, struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(ServeSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, _: args.Args(ServeSpec)) anyerror!u8 {
             return 0;
         }
     }.r);
 
-    const grp = TestCli.Command{
+    const grp = TestApp.Command{
         .name = "grp",
         .group = .general,
         .subcommands = &.{sub},
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -2797,7 +2797,7 @@ test "help parent sub renders the subcommand's own help" {
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "help", "grp", "sub" }, &.{grp}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "help", "grp", "sub" }, &.{grp}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     const out = out_w.buffered();
     try std.testing.expect(std.mem.startsWith(u8, out, "Usage: app grp sub [-p PORT] <name>\n"));
@@ -2805,27 +2805,27 @@ test "help parent sub renders the subcommand's own help" {
 }
 
 test "help parent bogus reports an unknown subcommand with exit code 2" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
-    const sub = TestCli.Command{
+    const sub = TestApp.Command{
         .name = "sub",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
     };
-    const grp = TestCli.Command{
+    const grp = TestApp.Command{
         .name = "grp",
         .group = .general,
         .subcommands = &.{sub},
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -2836,7 +2836,7 @@ test "help parent bogus reports an unknown subcommand with exit code 2" {
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "help", "grp", "bogus" }, &.{grp}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "help", "grp", "bogus" }, &.{grp}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 2), code);
     try std.testing.expectEqualStrings("", out_w.buffered());
     try std.testing.expectEqualStrings("unknown command \"bogus\" (did you mean \"sub\"?)\n", err_w.buffered());
@@ -2849,19 +2849,19 @@ fn testRenderTopHelp(w: *std.Io.Writer, prog_name: []const u8, commands: anytype
 }
 
 test "run calls cfg.renderTopHelp instead of the built-in top-level renderer, on both the no-command and --help paths" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
         .renderTopHelp = testRenderTopHelp,
     });
 
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "hello",
         .summary = "says hi",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -2873,7 +2873,7 @@ test "run calls cfg.renderTopHelp instead of the built-in top-level renderer, on
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
 
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, argv, &.{cmd}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, argv, &.{cmd}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqualStrings("CUSTOM TOP HELP\n", out_w.buffered());
         try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "Usage:") == null);
@@ -2887,19 +2887,19 @@ fn testRenderCommandHelp(w: *std.Io.Writer, prog_name: []const u8, command: anyt
 }
 
 test "run calls cfg.renderCommandHelp instead of the built-in per-command renderer, on both <cmd> --help and help <cmd>" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
         .renderCommandHelp = testRenderCommandHelp,
     });
 
-    const cmd = TestCli.command(ServeSpec, .{
+    const cmd = TestApp.command(ServeSpec, .{
         .name = "serve",
         .group = .general,
         .usage = "app serve [-p PORT] <name>",
     }, struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(ServeSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, _: args.Args(ServeSpec)) anyerror!u8 {
             return 0;
         }
     }.r);
@@ -2910,7 +2910,7 @@ test "run calls cfg.renderCommandHelp instead of the built-in per-command render
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
 
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "serve", "--help" }, &.{cmd}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "serve", "--help" }, &.{cmd}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqualStrings("CUSTOM COMMAND HELP for serve\n", out_w.buffered());
         try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "Usage:") == null);
@@ -2923,7 +2923,7 @@ test "run calls cfg.renderCommandHelp instead of the built-in per-command render
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
 
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "help", "serve" }, &.{cmd}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "help", "serve" }, &.{cmd}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqualStrings("CUSTOM COMMAND HELP for serve\n", out_w.buffered());
         try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "Usage:") == null);
@@ -2931,17 +2931,17 @@ test "run calls cfg.renderCommandHelp instead of the built-in per-command render
 }
 
 test "run dispatches a 3-level subcommand tree to arbitrary depth, preserving the flag-shape bypass at every level" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
-    const c = TestCli.Command{
+    const c = TestApp.Command{
         .name = "c",
         .group = .general,
         .run = struct {
-            fn r(ctx: *TestCli.Ctx) anyerror!u8 {
+            fn r(ctx: *TestApp.Ctx) anyerror!u8 {
                 try ctx.out.writeAll("c");
                 for (ctx.argv) |a| try ctx.out.print(" {s}", .{a});
                 try ctx.out.writeAll("\n");
@@ -2949,12 +2949,12 @@ test "run dispatches a 3-level subcommand tree to arbitrary depth, preserving th
             }
         }.r,
     };
-    const b = TestCli.Command{
+    const b = TestApp.Command{
         .name = "b",
         .group = .general,
         .subcommands = &.{c},
         .run = struct {
-            fn r(ctx: *TestCli.Ctx) anyerror!u8 {
+            fn r(ctx: *TestApp.Ctx) anyerror!u8 {
                 try ctx.out.writeAll("b");
                 for (ctx.argv) |a| try ctx.out.print(" {s}", .{a});
                 try ctx.out.writeAll("\n");
@@ -2962,12 +2962,12 @@ test "run dispatches a 3-level subcommand tree to arbitrary depth, preserving th
             }
         }.r,
     };
-    const a = TestCli.Command{
+    const a = TestApp.Command{
         .name = "a",
         .group = .general,
         .subcommands = &.{b},
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -2979,7 +2979,7 @@ test "run dispatches a 3-level subcommand tree to arbitrary depth, preserving th
         var out_w = std.Io.Writer.fixed(&out_buf);
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "a", "b", "c" }, &.{a}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "a", "b", "c" }, &.{a}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqualStrings("c\n", out_w.buffered());
     }
@@ -2990,7 +2990,7 @@ test "run dispatches a 3-level subcommand tree to arbitrary depth, preserving th
         var out_w = std.Io.Writer.fixed(&out_buf);
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "a", "b" }, &.{a}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "a", "b" }, &.{a}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqualStrings("b\n", out_w.buffered());
     }
@@ -3001,7 +3001,7 @@ test "run dispatches a 3-level subcommand tree to arbitrary depth, preserving th
         var out_w = std.Io.Writer.fixed(&out_buf);
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "a", "b", "c", "--flag" }, &.{a}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "a", "b", "c", "--flag" }, &.{a}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqualStrings("c --flag\n", out_w.buffered());
     }
@@ -3014,7 +3014,7 @@ test "run dispatches a 3-level subcommand tree to arbitrary depth, preserving th
         var out_w = std.Io.Writer.fixed(&out_buf);
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "a", "b", "--flag" }, &.{a}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "a", "b", "--flag" }, &.{a}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqualStrings("b --flag\n", out_w.buffered());
     }
@@ -3026,7 +3026,7 @@ test "run dispatches a 3-level subcommand tree to arbitrary depth, preserving th
         var out_w = std.Io.Writer.fixed(&out_buf);
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "a", "b", "bogus" }, &.{a}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "a", "b", "bogus" }, &.{a}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqualStrings("b bogus\n", out_w.buffered());
     }
@@ -3041,7 +3041,7 @@ const NestedCSpec = struct {
 };
 
 test "run resolves a command()-typed 3-level subcommand tree's own declared flag at the deepest leaf" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
@@ -3051,11 +3051,11 @@ test "run resolves a command()-typed 3-level subcommand tree's own declared flag
         var seen_bflag: bool = false;
         var seen_cflag: bool = false;
 
-        fn runB(_: *TestCli.Ctx, parsed: args.Args(NestedBSpec)) anyerror!u8 {
+        fn runB(_: *TestApp.Ctx, parsed: args.Args(NestedBSpec)) anyerror!u8 {
             seen_bflag = parsed.bflag;
             return 0;
         }
-        fn runC(_: *TestCli.Ctx, parsed: args.Args(NestedCSpec)) anyerror!u8 {
+        fn runC(_: *TestApp.Ctx, parsed: args.Args(NestedCSpec)) anyerror!u8 {
             seen_cflag = parsed.cflag;
             return 0;
         }
@@ -3063,25 +3063,25 @@ test "run resolves a command()-typed 3-level subcommand tree's own declared flag
     S.seen_bflag = false;
     S.seen_cflag = false;
 
-    const c = TestCli.command(NestedCSpec, .{
+    const c = TestApp.command(NestedCSpec, .{
         .name = "c",
         .group = .general,
         .usage = "app a b c [--cflag]",
     }, S.runC);
 
-    var b = TestCli.command(NestedBSpec, .{
+    var b = TestApp.command(NestedBSpec, .{
         .name = "b",
         .group = .general,
         .usage = "app a b [--bflag]",
     }, S.runB);
     b.subcommands = &.{c};
 
-    const a = TestCli.Command{
+    const a = TestApp.Command{
         .name = "a",
         .group = .general,
         .subcommands = &.{b},
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -3092,7 +3092,7 @@ test "run resolves a command()-typed 3-level subcommand tree's own declared flag
         var out_w = std.Io.Writer.fixed(&out_buf);
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "a", "b", "c", "--cflag" }, &.{a}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "a", "b", "c", "--cflag" }, &.{a}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expect(S.seen_cflag);
         try std.testing.expect(!S.seen_bflag);
@@ -3103,46 +3103,46 @@ test "run resolves a command()-typed 3-level subcommand tree's own declared flag
         var out_w = std.Io.Writer.fixed(&out_buf);
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "a", "b", "--bflag" }, &.{a}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "a", "b", "--bflag" }, &.{a}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expect(S.seen_bflag);
     }
 }
 
 test "help resolves a 3-level subcommand tree to the deepest matching command" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
-    const c = TestCli.command(NestedCSpec, .{
+    const c = TestApp.command(NestedCSpec, .{
         .name = "c",
         .group = .general,
         .usage = "app a b c [--cflag]",
     }, struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(NestedCSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, _: args.Args(NestedCSpec)) anyerror!u8 {
             return 0;
         }
     }.r);
 
-    var b = TestCli.command(NestedBSpec, .{
+    var b = TestApp.command(NestedBSpec, .{
         .name = "b",
         .group = .general,
         .usage = "app a b [--bflag]",
     }, struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(NestedBSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, _: args.Args(NestedBSpec)) anyerror!u8 {
             return 0;
         }
     }.r);
     b.subcommands = &.{c};
 
-    const a = TestCli.Command{
+    const a = TestApp.Command{
         .name = "a",
         .group = .general,
         .subcommands = &.{b},
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -3154,7 +3154,7 @@ test "help resolves a 3-level subcommand tree to the deepest matching command" {
         var out_w = std.Io.Writer.fixed(&out_buf);
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "help", "a", "b", "c" }, &.{a}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "help", "a", "b", "c" }, &.{a}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         const out = out_w.buffered();
         try std.testing.expect(std.mem.startsWith(u8, out, "Usage: app a b c [--cflag]\n"));
@@ -3167,13 +3167,13 @@ test "help resolves a 3-level subcommand tree to the deepest matching command" {
         var out_w_a = std.Io.Writer.fixed(&out_buf_a);
         var err_buf_a: [64]u8 = undefined;
         var err_w_a = std.Io.Writer.fixed(&err_buf_a);
-        _ = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "a", "b", "--help" }, &.{a}, &out_w_a, &err_w_a);
+        _ = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "a", "b", "--help" }, &.{a}, &out_w_a, &err_w_a);
 
         var out_buf_b: [512]u8 = undefined;
         var out_w_b = std.Io.Writer.fixed(&out_buf_b);
         var err_buf_b: [64]u8 = undefined;
         var err_w_b = std.Io.Writer.fixed(&err_buf_b);
-        _ = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "help", "a", "b" }, &.{a}, &out_w_b, &err_w_b);
+        _ = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "help", "a", "b" }, &.{a}, &out_w_b, &err_w_b);
 
         try std.testing.expectEqualStrings(out_w_a.buffered(), out_w_b.buffered());
         try std.testing.expect(std.mem.indexOf(u8, out_w_a.buffered(), "b's own flag") != null);
@@ -3185,7 +3185,7 @@ test "help resolves a 3-level subcommand tree to the deepest matching command" {
         var out_w = std.Io.Writer.fixed(&out_buf);
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "a", "b", "c", "--help" }, &.{a}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "a", "b", "c", "--help" }, &.{a}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expect(std.mem.startsWith(u8, out_w.buffered(), "Usage: app a b c [--cflag]\n"));
     }
@@ -3197,7 +3197,7 @@ test "help resolves a 3-level subcommand tree to the deepest matching command" {
         var out_w = std.Io.Writer.fixed(&out_buf);
         var err_buf: [64]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
-        const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "help", "a", "b", "bogus" }, &.{a}, &out_w, &err_w);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "help", "a", "b", "bogus" }, &.{a}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 2), code);
         try std.testing.expectEqualStrings("", out_w.buffered());
         try std.testing.expectEqualStrings("unknown command \"bogus\" (did you mean \"c\"?)\n", err_w.buffered());
@@ -3205,37 +3205,37 @@ test "help resolves a 3-level subcommand tree to the deepest matching command" {
 }
 
 test "run intercepts __schema and emits a 3-level subcommand tree nested to depth" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
 
-    const c = TestCli.Command{
+    const c = TestApp.Command{
         .name = "c",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
     };
-    const b = TestCli.Command{
+    const b = TestApp.Command{
         .name = "b",
         .group = .general,
         .subcommands = &.{c},
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
     };
-    const a = TestCli.Command{
+    const a = TestApp.Command{
         .name = "a",
         .group = .general,
         .subcommands = &.{b},
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -3246,7 +3246,7 @@ test "run intercepts __schema and emits a 3-level subcommand tree nested to dept
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "__schema" }, &.{a}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "__schema" }, &.{a}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     const out = out_w.buffered();
 
@@ -3269,17 +3269,17 @@ test "run intercepts __schema and emits a 3-level subcommand tree nested to dept
 }
 
 test "cfg.messagePrefix prepends to an unknown-command diagnostic" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
         .messagePrefix = "app: ",
     });
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "status",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -3290,23 +3290,23 @@ test "cfg.messagePrefix prepends to an unknown-command diagnostic" {
     var err_buf: [128]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "stauts" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "stauts" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 2), code);
     try std.testing.expect(std.mem.startsWith(u8, err_w.buffered(), "app: unknown command \"stauts\""));
 }
 
 test "cfg.messagePrefix prepends to a run_fn error" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
         .messagePrefix = "app: ",
     });
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "boom",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return error.Boom;
             }
         }.r,
@@ -3317,13 +3317,13 @@ test "cfg.messagePrefix prepends to a run_fn error" {
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "boom" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "boom" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 1), code);
     try std.testing.expectEqualStrings("app: error: Boom\n", err_w.buffered());
 }
 
 test "cfg.messagePrefix prepends to a parse UsageError's message and usage line" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
@@ -3331,12 +3331,12 @@ test "cfg.messagePrefix prepends to a parse UsageError's message and usage line"
     });
 
     const S = struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
             return 0;
         }
     };
 
-    const cmd = TestCli.command(GreetSpec, .{
+    const cmd = TestApp.command(GreetSpec, .{
         .name = "greet",
         .group = .general,
         .usage = "app greet [-v] [-p port] <name>",
@@ -3347,7 +3347,7 @@ test "cfg.messagePrefix prepends to a parse UsageError's message and usage line"
     var err_buf: [256]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "greet" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "greet" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 2), code);
     var lines = std.mem.splitScalar(u8, err_w.buffered(), '\n');
     try std.testing.expect(std.mem.startsWith(u8, lines.next().?, "app: "));
@@ -3355,7 +3355,7 @@ test "cfg.messagePrefix prepends to a parse UsageError's message and usage line"
 }
 
 test "cfg.messagePrefix prepends to an About.exclusive conflict message" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
@@ -3363,12 +3363,12 @@ test "cfg.messagePrefix prepends to an About.exclusive conflict message" {
     });
 
     const S = struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(ExclusiveSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, _: args.Args(ExclusiveSpec)) anyerror!u8 {
             return 0;
         }
     };
 
-    const cmd = TestCli.command(ExclusiveSpec, .{
+    const cmd = TestApp.command(ExclusiveSpec, .{
         .name = "ex",
         .group = .general,
         .exclusive = &.{&.{ "a", "b" }},
@@ -3379,7 +3379,7 @@ test "cfg.messagePrefix prepends to an About.exclusive conflict message" {
     var err_buf: [128]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "ex", "--a", "x", "--b", "y" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "ex", "--a", "x", "--b", "y" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 2), code);
     try std.testing.expect(std.mem.startsWith(u8, err_w.buffered(), "app: --a and --b are mutually exclusive"));
 }
@@ -3392,19 +3392,19 @@ test "cfg.messagePrefix prepends to a loadContext failure's diag.message" {
         }
     };
 
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = ContextSentinel,
         .Group = enum { general },
         .loadContext = S.loadContext,
         .messagePrefix = "app: ",
     });
 
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "with",
         .group = .general,
         .needs_context = true,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return 0;
             }
         }.r,
@@ -3415,22 +3415,22 @@ test "cfg.messagePrefix prepends to a loadContext failure's diag.message" {
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "with" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "with" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 1), code);
     try std.testing.expectEqualStrings("app: config.toml:3 bad\n", err_w.buffered());
 }
 
 test "without cfg.messagePrefix, framework stderr messages are unprefixed (unchanged behavior)" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
     });
-    const cmd = TestCli.Command{
+    const cmd = TestApp.Command{
         .name = "boom",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return error.Boom;
             }
         }.r,
@@ -3441,7 +3441,7 @@ test "without cfg.messagePrefix, framework stderr messages are unprefixed (uncha
     var err_buf: [64]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try TestCli.run(std.testing.allocator, std.testing.io, &.{ "app", "boom" }, &.{cmd}, &out_w, &err_w);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "boom" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 1), code);
     try std.testing.expectEqualStrings("error: Boom\n", err_w.buffered());
 }
@@ -3461,7 +3461,7 @@ const LeakAuditSpec = struct {
 };
 
 test "Fix 4: no cli-zig-internal leak across help/version/__complete/__schema/completion/error/exclusive paths under std.testing.allocator" {
-    const TestCli = Cli(.{
+    const TestApp = App(.{
         .Context = void,
         .Group = enum { general },
         .loadContext = testNoopLoadContext,
@@ -3472,40 +3472,40 @@ test "Fix 4: no cli-zig-internal leak across help/version/__complete/__schema/co
         }.f,
     });
 
-    const boom_cmd = TestCli.Command{
+    const boom_cmd = TestApp.Command{
         .name = "boom",
         .group = .general,
         .run = struct {
-            fn r(_: *TestCli.Ctx) anyerror!u8 {
+            fn r(_: *TestApp.Ctx) anyerror!u8 {
                 return error.Boom;
             }
         }.r,
     };
-    const version_cmd = TestCli.Command{
+    const version_cmd = TestApp.Command{
         .name = "version",
         .group = .general,
         .run = struct {
-            fn r(ctx: *TestCli.Ctx) anyerror!u8 {
+            fn r(ctx: *TestApp.Ctx) anyerror!u8 {
                 try ctx.out.writeAll("1.0.0\n");
                 return 0;
             }
         }.r,
     };
-    const greet_cmd = TestCli.command(GreetSpec, .{
+    const greet_cmd = TestApp.command(GreetSpec, .{
         .name = "greet",
         .group = .general,
         .usage = "app greet [-v] [-p port] <name>",
     }, struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, _: args.Args(GreetSpec)) anyerror!u8 {
             return 0;
         }
     }.r);
-    const ex_cmd = TestCli.command(ExclusiveSpec, .{
+    const ex_cmd = TestApp.command(ExclusiveSpec, .{
         .name = "ex",
         .group = .general,
         .exclusive = &.{&.{ "a", "b" }},
     }, struct {
-        fn r(_: *TestCli.Ctx, _: args.Args(ExclusiveSpec)) anyerror!u8 {
+        fn r(_: *TestApp.Ctx, _: args.Args(ExclusiveSpec)) anyerror!u8 {
             return 0;
         }
     }.r);
@@ -3536,6 +3536,6 @@ test "Fix 4: no cli-zig-internal leak across help/version/__complete/__schema/co
         var err_buf: [512]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
 
-        _ = try TestCli.run(std.testing.allocator, std.testing.io, argv, commands, &out_w, &err_w);
+        _ = try TestApp.run(std.testing.allocator, std.testing.io, argv, commands, &out_w, &err_w);
     }
 }

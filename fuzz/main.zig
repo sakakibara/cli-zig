@@ -13,7 +13,7 @@
 //!
 //! Checked per generated argv:
 //!
-//! 1. `cli.args.parseInto` against a representative `Spec` (several bool
+//! 1. `cli.parseInto` against a representative `Spec` (several bool
 //!    short flags, a multi-word long-only bool flag, a short `u16` option, a
 //!    short string option, a required positional, and a variadic tail) never
 //!    panics; a malformed argv reports `UsageError` rather than crashing.
@@ -21,7 +21,7 @@
 //!    a cluster's trailing value-option glued or as the next token) and
 //!    repeated flags/options (idempotent bool, last-wins value) are
 //!    meaningfully exercised, not just long-flag forms.
-//! 2. `cli.cli.Cli(cfg).run` against a small command table (a plain command,
+//! 2. `cli.App(cfg).run` against a small command table (a plain command,
 //!    and a parent command with one subcommand) never panics and its
 //!    internal error boundary means `run` itself should never return an
 //!    error - one doing so is treated as a failure.
@@ -90,49 +90,49 @@ fn fuzzPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
 /// value types), a required positional, and a variadic tail - one
 /// representative of each `spec.Kind`, weighted toward short forms.
 const FuzzSpec = struct {
-    verbose: cli.spec.Flag(.{ .short = 'v' }),
-    alpha: cli.spec.Flag(.{ .short = 'a' }),
-    bravo: cli.spec.Flag(.{ .short = 'b' }),
-    charlie: cli.spec.Flag(.{ .short = 'c' }),
-    dry_run: cli.spec.Flag(.{}),
-    port: cli.spec.Opt(u16, .{ .short = 'p' }),
-    output: cli.spec.Opt([]const u8, .{ .short = 'o' }),
-    name: cli.spec.Pos([]const u8, .{}),
-    rest: cli.spec.Rest(.{}),
+    verbose: cli.Flag(.{ .short = 'v' }),
+    alpha: cli.Flag(.{ .short = 'a' }),
+    bravo: cli.Flag(.{ .short = 'b' }),
+    charlie: cli.Flag(.{ .short = 'c' }),
+    dry_run: cli.Flag(.{}),
+    port: cli.Opt(u16, .{ .short = 'p' }),
+    output: cli.Opt([]const u8, .{ .short = 'o' }),
+    name: cli.Pos([]const u8, .{}),
+    rest: cli.Rest(.{}),
 };
 
 const ChildSpec = struct {
-    flag_x: cli.spec.Flag(.{}),
+    flag_x: cli.Flag(.{}),
 };
 
 const GrandchildSpec = struct {
-    flag_y: cli.spec.Flag(.{}),
+    flag_y: cli.Flag(.{}),
 };
 
 fn envNone(_: []const u8) ?[]const u8 {
     return null;
 }
-const fuzz_source = cli.args.Source{ .env_get = envNone, .config_get = null };
+const fuzz_source = cli.Source{ .env_get = envNone, .config_get = null };
 
 const Group = enum { general };
 
-fn noopLoadContext(_: std.mem.Allocator, _: std.Io, _: *cli.args.Diagnostic) anyerror!void {}
+fn noopLoadContext(_: std.mem.Allocator, _: std.Io, _: *cli.Diagnostic) anyerror!void {}
 
-const FuzzCli = cli.cli.Cli(.{
+const FuzzApp = cli.App(.{
     .Context = void,
     .Group = Group,
     .loadContext = noopLoadContext,
 });
 
-fn greetRun(_: *FuzzCli.Ctx, _: cli.args.Args(FuzzSpec)) anyerror!u8 {
+fn greetRun(_: *FuzzApp.Ctx, _: cli.Args(FuzzSpec)) anyerror!u8 {
     return 0;
 }
 
-fn childRun(_: *FuzzCli.Ctx, _: cli.args.Args(ChildSpec)) anyerror!u8 {
+fn childRun(_: *FuzzApp.Ctx, _: cli.Args(ChildSpec)) anyerror!u8 {
     return 0;
 }
 
-fn grandchildRun(_: *FuzzCli.Ctx, _: cli.args.Args(GrandchildSpec)) anyerror!u8 {
+fn grandchildRun(_: *FuzzApp.Ctx, _: cli.Args(GrandchildSpec)) anyerror!u8 {
     return 0;
 }
 
@@ -179,7 +179,7 @@ const spec_seed_argvs = [_][]const []const u8{
     &.{ "-vv", "--port=1", "--port=2", "widget", "--", "a" },
 };
 
-/// Valid argv seeds for the `Cli.run` dispatch target, prefixed with a
+/// Valid argv seeds for the `App.run` dispatch target, prefixed with a
 /// program name: plain-command invocations exercising the same grammar as
 /// `spec_seed_argvs` (including clustered short tokens and repeated flags/
 /// options), a parent/child/grandchild subcommand path three levels deep
@@ -278,27 +278,27 @@ pub fn main(init: std.process.Init) !void {
     // `subcommands` slices stay valid for the whole run. `parent` -> `child`
     // -> `grandchild` is three levels deep, exercising the fuzzer's dispatch
     // and help paths past the one-level case.
-    const grandchild_cmd = FuzzCli.command(GrandchildSpec, .{
+    const grandchild_cmd = FuzzApp.command(GrandchildSpec, .{
         .name = "grandchild",
         .group = .general,
     }, grandchildRun);
-    const grandchildren = [_]FuzzCli.Command{grandchild_cmd};
-    var child_cmd = FuzzCli.command(ChildSpec, .{
+    const grandchildren = [_]FuzzApp.Command{grandchild_cmd};
+    var child_cmd = FuzzApp.command(ChildSpec, .{
         .name = "child",
         .group = .general,
     }, childRun);
     child_cmd.subcommands = &grandchildren;
-    const subcommands = [_]FuzzCli.Command{child_cmd};
-    var parent_cmd = FuzzCli.command(FuzzSpec, .{
+    const subcommands = [_]FuzzApp.Command{child_cmd};
+    var parent_cmd = FuzzApp.command(FuzzSpec, .{
         .name = "parent",
         .group = .general,
     }, greetRun);
     parent_cmd.subcommands = &subcommands;
-    const greet_cmd = FuzzCli.command(FuzzSpec, .{
+    const greet_cmd = FuzzApp.command(FuzzSpec, .{
         .name = "greet",
         .group = .general,
     }, greetRun);
-    const commands = [_]FuzzCli.Command{ greet_cmd, parent_cmd };
+    const commands = [_]FuzzApp.Command{ greet_cmd, parent_cmd };
 
     var arena_state = std.heap.ArenaAllocator.init(init.gpa);
     defer arena_state.deinit();
@@ -320,15 +320,15 @@ pub fn main(init: std.process.Init) !void {
         }
 
         const cli_argv = try generateArgv(random, a, &cli_seed_argvs);
-        recordAttempt("cli.run", seed, iter, cli_argv);
-        const code = checkCliRun(a, init.io, &commands, cli_argv) catch |err| {
-            reportFailure("cli.run", err, seed, iter, cli_argv);
+        recordAttempt("App.run", seed, iter, cli_argv);
+        const code = checkAppRun(a, init.io, &commands, cli_argv) catch |err| {
+            reportFailure("App.run", err, seed, iter, cli_argv);
         };
         cli_exit[@min(code, 3)] += 1;
     }
 
     std.debug.print(
-        "fuzz: {d} iterations OK (seed 0x{x}); parseInto ok={d} usage_error={d}; cli.run exit 0={d} 1={d} 2={d} other={d}\n",
+        "fuzz: {d} iterations OK (seed 0x{x}); parseInto ok={d} usage_error={d}; App.run exit 0={d} 1={d} 2={d} other={d}\n",
         .{ iterations, seed, parse_ok, parse_usage_error, cli_exit[0], cli_exit[1], cli_exit[2], cli_exit[3] },
     );
 }
@@ -346,22 +346,22 @@ fn reportFailure(label: []const u8, err: anyerror, seed: u64, iter: usize, argv:
 const ParseOutcome = enum { ok, usage_error };
 
 fn checkParseInto(a: std.mem.Allocator, argv: []const []const u8) ParseOutcome {
-    var diag = cli.args.Diagnostic{};
-    _ = cli.args.parseInto(FuzzSpec, a, argv, fuzz_source, &diag) catch |err| switch (err) {
+    var diag = cli.Diagnostic{};
+    _ = cli.parseInto(FuzzSpec, a, argv, fuzz_source, &diag) catch |err| switch (err) {
         error.UsageError, error.OutOfMemory => return .usage_error,
     };
     return .ok;
 }
 
-/// `Cli.run` catches every fallible operation internally (a command body's
+/// `App.run` catches every fallible operation internally (a command body's
 /// error, a `loadContext` failure, a render/emit failure); it should never
 /// itself return an error, so a caller treats one as a real failure.
-fn checkCliRun(a: std.mem.Allocator, io: std.Io, commands: []const FuzzCli.Command, argv: []const []const u8) !u8 {
+fn checkAppRun(a: std.mem.Allocator, io: std.Io, commands: []const FuzzApp.Command, argv: []const []const u8) !u8 {
     var out_scratch: [256]u8 = undefined;
     var out_w: std.Io.Writer.Discarding = .init(&out_scratch);
     var err_scratch: [256]u8 = undefined;
     var err_w: std.Io.Writer.Discarding = .init(&err_scratch);
-    return FuzzCli.run(a, io, argv, commands, &out_w.writer, &err_w.writer);
+    return FuzzApp.run(a, io, argv, commands, &out_w.writer, &err_w.writer);
 }
 
 /// One argv-level mutation applied on top of a seed. Byte-level edits are

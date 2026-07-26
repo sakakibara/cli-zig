@@ -7,7 +7,7 @@ const cli = @import("cli");
 
 const Group = enum { general };
 
-fn loadContext(_: std.mem.Allocator, _: std.Io, _: *cli.args.Diagnostic) anyerror!void {}
+fn loadContext(_: std.mem.Allocator, _: std.Io, _: *cli.Diagnostic) anyerror!void {}
 
 const environments = [_][]const u8{ "dev", "staging", "prod" };
 
@@ -20,7 +20,7 @@ fn resolveCompletion(alloc: std.mem.Allocator, key: []const u8, _: ?[]const u8, 
     return .{ .directive = .default, .candidates = try out.toOwnedSlice(alloc) };
 }
 
-const App = cli.cli.Cli(.{
+const App = cli.App(.{
     .Context = void,
     .Group = Group,
     .loadContext = loadContext,
@@ -28,10 +28,10 @@ const App = cli.cli.Cli(.{
 });
 
 const DeploySpec = struct {
-    env: cli.spec.Opt([]const u8, .{ .help = "target environment", .complete = .{ .dynamic = "env" } }),
+    env: cli.Opt([]const u8, .{ .help = "target environment", .complete = .{ .dynamic = "env" } }),
 };
 
-fn deployRun(ctx: *App.Ctx, a: cli.args.Args(DeploySpec)) anyerror!u8 {
+fn deployRun(ctx: *App.Ctx, a: cli.Args(DeploySpec)) anyerror!u8 {
     try ctx.out.print("deploying to {s}\n", .{a.env orelse "(unset)"});
     return 0;
 }
