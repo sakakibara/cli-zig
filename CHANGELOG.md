@@ -6,6 +6,22 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-26
+
+### Changed
+
+- **Breaking:** the root module exports a curated surface instead of the
+  internal file layout. `cli.cli.Cli(cfg)` is now `cli.App(cfg)`; the Spec
+  constructors and args-layer entry points are flat re-exports
+  (`cli.Flag`/`cli.Opt`/`cli.Pos`/`cli.Rest`, `cli.looksLikeFlag`,
+  `cli.Args`, `cli.parseInto`, `cli.Source`, `cli.Diagnostic`); the `meta`
+  and `complete` namespaces remain as they were. The `spec`, `args`,
+  `parse`, `resolve`, `cli`, `help`, `shells`, and `schema` namespaces are
+  no longer exported, with no aliases kept: `cli.spec.Flag` becomes
+  `cli.Flag`, `cli.args.Args` becomes `cli.Args`, and the parse/resolve/
+  help/shells/schema internals are reachable only through `App` and the
+  derived `completion`/`__schema` commands.
+
 ## [0.1.2] - 2026-07-12
 
 ### Fixed
