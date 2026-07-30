@@ -347,7 +347,7 @@ pub fn App(comptime cfg: anytype) type {
             /// Use this for a symmetric set ("at most one of these"). For one
             /// set that rules out another while each side still combines
             /// internally, see `conflicts`.
-            exclusive: []const []const []const u8 = &.{},
+            exclusive: []const Exclusive = &.{},
             /// Cross-set incompatibilities: any field from `any_of` provided
             /// together with any field from `with` is a usage error. Unlike
             /// `exclusive`, each side stays free to combine among itself --
@@ -355,6 +355,15 @@ pub fn App(comptime cfg: anytype) type {
             conflicts: []const Conflict = &.{},
             /// Dependencies: fields that mean nothing without others.
             requires: []const Requirement = &.{},
+        };
+
+        /// One mutually-exclusive group for `About.exclusive`: at most one
+        /// of `any_of` may be provided.
+        pub const Exclusive = struct {
+            any_of: []const []const u8,
+            /// Why they are exclusive, in the command's own vocabulary. See
+            /// `Conflict.why`.
+            why: []const u8 = "",
         };
 
         /// One cross-set incompatibility for `About.conflicts`. A lone field
@@ -392,7 +401,9 @@ pub fn App(comptime cfg: anytype) type {
         /// silently-ignored group.
         fn validateExclusive(comptime Spec: type, comptime about: About) void {
             for (about.exclusive) |group| {
-                for (group) |name| {
+                if (group.any_of.len < 2)
+                    @compileError("an exclusive group needs at least two fields to be exclusive of each other");
+                for (group.any_of) |name| {
                     if (!@hasField(Spec, name))
                         @compileError("exclusive constraint names \"" ++ name ++ "\", which is not a field of the schema");
                 }
@@ -453,16 +464,20 @@ pub fn App(comptime cfg: anytype) type {
             };
         }
 
-        /// Checks `about.exclusive` against `parsed`: returns the kebab-
-        /// spelled pair of the first two fields provided within the same
-        /// group, or null when every group has at most one field provided.
-        fn exclusiveConflict(comptime Spec: type, comptime about: About, parsed: args.Args(Spec)) ?[2][]const u8 {
+        /// Checks `about.exclusive` against `parsed`: the kebab-spelled pair
+        /// of the first two fields provided within one group, plus that
+        /// group's reason, or null when every group has at most one provided.
+        fn exclusiveConflict(
+            comptime Spec: type,
+            comptime about: About,
+            parsed: args.Args(Spec),
+        ) ?struct { a: []const u8, b: []const u8, why: []const u8 } {
             inline for (about.exclusive) |group| {
                 var first: ?[]const u8 = null;
-                inline for (group) |name| {
+                inline for (group.any_of) |name| {
                     if (isProvided(Spec, parsed, name)) {
                         const spelled = comptime spec.kebab(name);
-                        if (first) |a| return .{ a, spelled };
+                        if (first) |a| return .{ .a = a, .b = spelled, .why = group.why };
                         first = spelled;
                     }
                 }
@@ -535,7 +550,11 @@ pub fn App(comptime cfg: anytype) type {
         fn deriveConstraints(comptime about: About) []const Constraint {
             comptime var out: []const Constraint = &.{};
             inline for (about.exclusive) |group| {
-                out = out ++ [_]Constraint{.{ .kind = .exclusive, .subject = spelledNames(group) }};
+                out = out ++ [_]Constraint{.{
+                    .kind = .exclusive,
+                    .subject = spelledNames(group.any_of),
+                    .why = group.why,
+                }};
             }
             inline for (about.conflicts) |c| {
                 out = out ++ [_]Constraint{.{
@@ -625,7 +644,19 @@ pub fn App(comptime cfg: anytype) type {
                         },
                     };
                     if (exclusiveConflict(Spec, about, parsed)) |conflict| {
-                        const msg = std.fmt.allocPrint(arena_state.allocator(), "--{s} and --{s} are mutually exclusive", .{ conflict[0], conflict[1] }) catch "mutually exclusive flags";
+                        // The reason comes from a runtime lookup here, not a
+                        // comptime one as in `relationViolation`, so the
+                        // parentheses are placed by value rather than folded
+                        // into the format string.
+                        const open = if (conflict.why.len > 0) " (" else "";
+                        const close = if (conflict.why.len > 0) ")" else "";
+                        const msg = std.fmt.allocPrint(arena_state.allocator(), "--{s} and --{s} are mutually exclusive{s}{s}{s}", .{
+                            conflict.a,
+                            conflict.b,
+                            open,
+                            conflict.why,
+                            close,
+                        }) catch "mutually exclusive flags";
                         writeUsageError(ctx.err, message_prefix, msg, about.usage);
                         return 2;
                     }
@@ -1420,6 +1451,43 @@ fn relationCommand(comptime TestApp: type, called: *bool) TestApp.Command {
     }, S.r);
 }
 
+test "an exclusive group carries its reason into the usage error and the schema" {
+    const TestApp = App(.{
+        .Context = void,
+        .Group = enum { general },
+        .loadContext = testNoopLoadContext,
+    });
+    const S = struct {
+        fn r(_: *TestApp.Ctx, _: args.Args(ExclusiveSpec)) anyerror!u8 {
+            return 0;
+        }
+    };
+    const cmd = TestApp.command(ExclusiveSpec, .{
+        .name = "ex",
+        .group = .general,
+        .exclusive = &.{.{
+            .any_of = &.{ "a", "b" },
+            .why = "each names a different backend",
+        }},
+    }, S.r);
+
+    var out_buf: [64]u8 = undefined;
+    var out_w = std.Io.Writer.fixed(&out_buf);
+    var err_buf: [256]u8 = undefined;
+    var err_w = std.Io.Writer.fixed(&err_buf);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "ex", "--a", "x", "--b", "y" }, &.{cmd}, &out_w, &err_w);
+    try std.testing.expectEqual(@as(u8, 2), code);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        err_w.buffered(),
+        "--a and --b are mutually exclusive (each names a different backend)",
+    ) != null);
+
+    // The same reason reaches help and schema, so the command never has to
+    // restate the rule in its own prose.
+    try std.testing.expectEqualStrings("each names a different backend", cmd.constraints[0].why);
+}
+
 test "About.conflicts rejects a cross-set pair and keeps each side combinable" {
     const TestApp = App(.{
         .Context = void,
@@ -1551,7 +1619,7 @@ test "command() trampoline enforces About.exclusive and never calls run_fn on co
     const cmd = TestApp.command(ExclusiveSpec, .{
         .name = "ex",
         .group = .general,
-        .exclusive = &.{&.{ "a", "b" }},
+        .exclusive = &.{.{ .any_of = &.{ "a", "b" } }},
     }, S.r);
 
     {
@@ -3743,7 +3811,7 @@ test "cfg.messagePrefix prepends to an About.exclusive conflict message" {
     const cmd = TestApp.command(ExclusiveSpec, .{
         .name = "ex",
         .group = .general,
-        .exclusive = &.{&.{ "a", "b" }},
+        .exclusive = &.{.{ .any_of = &.{ "a", "b" } }},
     }, S.r);
 
     var out_buf: [64]u8 = undefined;
@@ -3875,7 +3943,7 @@ test "Fix 4: no cli-zig-internal leak across help/version/__complete/__schema/co
     const ex_cmd = TestApp.command(ExclusiveSpec, .{
         .name = "ex",
         .group = .general,
-        .exclusive = &.{&.{ "a", "b" }},
+        .exclusive = &.{.{ .any_of = &.{ "a", "b" } }},
     }, struct {
         fn r(_: *TestApp.Ctx, _: args.Args(ExclusiveSpec)) anyerror!u8 {
             return 0;

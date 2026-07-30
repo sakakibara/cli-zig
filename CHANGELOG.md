@@ -27,6 +27,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Breaking:** `About.exclusive` takes `[]const Exclusive` instead of
+  `[]const []const []const u8`, so a group can carry a `why` like the other
+  two relations. `.exclusive = &.{&.{ "a", "b" }}` becomes
+  `.exclusive = &.{.{ .any_of = &.{ "a", "b" } }}`. A group of fewer than two
+  fields is now a build error -- it could never conflict.
 - **Breaking (internal):** `help.Renderer` and `schema.Emitter` take a
   `Constraint` type parameter alongside `Command`/`Flag`/`Arg`/`Group`. An app
   built on `App(cfg)` is unaffected; only a caller instantiating those
