@@ -23,9 +23,14 @@ JSON schema all derive from that one declaration.
   would otherwise have to re-parse `--help` text.
 - **Did-you-mean suggestions** - an unknown command name suggests the
   nearest registered one, by prefix match or bounded edit distance.
-- **Mutually exclusive flag groups** - `About.exclusive` names groups of
-  fields where at most one may be provided; a conflict is caught and
-  reported before your command body ever runs.
+- **Declared flag relations** - `About.exclusive` (at most one of a set),
+  `About.conflicts` (one set rules out another, each side still free to
+  combine internally), and `About.requires` (a field that needs companions,
+  any or all). Field names are comptime-checked, so a typo or a rule that
+  could never hold is a build error. Each relation carries a `why` in your
+  own vocabulary, and the one declaration feeds the enforcement, the error
+  message, the `Constraints:` section of `--help`, and the schema - so an app
+  never hand-rolls the check and then restates it in prose.
 - **Dependency-free** - pure Zig, no libc, no external packages.
 
 ```zig

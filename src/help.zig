@@ -5,11 +5,49 @@ const std = @import("std");
 
 /// A renderer for one app's `Command`/`Flag`/`Arg`/`Group` shapes, generic
 /// over whatever `App(cfg)` monomorphized them to.
-pub fn Renderer(comptime Command: type, comptime Flag: type, comptime Arg: type, comptime Group: type) type {
+pub fn Renderer(comptime Command: type, comptime Flag: type, comptime Arg: type, comptime Group: type, comptime Constraint: type) type {
     return struct {
         fn padTo(w: *std.Io.Writer, text: []const u8, width: usize) !void {
             try w.writeAll(text);
             if (text.len < width) try w.splatByteAll(' ', width - text.len);
+        }
+
+        /// Already-spelled flag names, comma-joined: how a constraint line
+        /// names either side of a relation.
+        fn writeJoined(w: *std.Io.Writer, names: []const []const u8) !void {
+            for (names, 0..) |n, i| {
+                if (i > 0) try w.writeAll(", ");
+                try w.writeAll(n);
+            }
+        }
+
+        /// One relation, as a line under `Constraints:`. Names arrive already
+        /// spelled as argv accepts them, so this only joins and phrases them.
+        fn writeConstraint(w: *std.Io.Writer, c: Constraint) !void {
+            try w.writeAll("  ");
+            switch (c.kind) {
+                .exclusive => {
+                    try w.writeAll("at most one of ");
+                    try writeJoined(w, c.subject);
+                },
+                .conflicts => {
+                    try writeJoined(w, c.subject);
+                    try w.writeAll(" cannot combine with ");
+                    try writeJoined(w, c.others);
+                },
+                .requires_any => {
+                    try writeJoined(w, c.subject);
+                    try w.writeAll(" requires one of ");
+                    try writeJoined(w, c.others);
+                },
+                .requires_all => {
+                    try writeJoined(w, c.subject);
+                    try w.writeAll(" requires ");
+                    try writeJoined(w, c.others);
+                },
+            }
+            if (c.why.len > 0) try w.print(" ({s})", .{c.why});
+            try w.writeByte('\n');
         }
 
         /// Builds `<name> [--flags] <pos> [<opt>] [<rest...>]` from a
@@ -141,6 +179,15 @@ pub fn Renderer(comptime Command: type, comptime Flag: type, comptime Arg: type,
                 }
             }
 
+            // After the tables that say what exists, before the prose: what
+            // the parser will refuse. A reader who has just seen two flags
+            // listed side by side is the one who needs to know they cannot
+            // be given together.
+            if (cmd.constraints.len > 0) {
+                try w.writeAll("\nConstraints:\n");
+                for (cmd.constraints) |c| try writeConstraint(w, c);
+            }
+
             if (cmd.subcommands.len > 0) {
                 var width: usize = 0;
                 for (cmd.subcommands) |s| width = @max(width, s.name.len);
@@ -185,9 +232,19 @@ const TestCommand = struct {
     flags: []const TestFlag = &.{},
     args: []const TestArg = &.{},
     subcommands: []const TestCommand = &.{},
+    constraints: []const TestConstraint = &.{},
 };
 
-const TR = Renderer(TestCommand, TestFlag, TestArg, TestGroup);
+/// Mirrors `App(cfg).Constraint`, which the generic renderer/emitter never
+/// see directly -- they take whatever shape the app monomorphized.
+const TestConstraint = struct {
+    kind: enum { exclusive, conflicts, requires_any, requires_all },
+    subject: []const []const u8,
+    others: []const []const u8 = &.{},
+    why: []const u8 = "",
+};
+
+const TR = Renderer(TestCommand, TestFlag, TestArg, TestGroup, TestConstraint);
 
 test "renderTop points the user at completion <shell> alongside <command> --help" {
     var buf: [512]u8 = undefined;
@@ -260,6 +317,58 @@ test "renderCommand lists a command's subcommands under a Commands section, with
     try testing.expect(std.mem.indexOf(u8, got, "\nCommands:\n") != null);
     try testing.expect(std.mem.indexOf(u8, got, "  add   add a remote\n") != null);
     try testing.expect(std.mem.indexOf(u8, got, "  list  list remotes\n") != null);
+}
+
+test "renderCommand states every relation under Constraints, with the author's reason" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+
+    var buf: [1024]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+
+    const cmd = TestCommand{
+        .name = "add",
+        .flags = &.{
+            .{ .long = "recursive", .short = 'r' },
+            .{ .long = "own", .takes_value = true, .value_name = "key-path" },
+        },
+        .constraints = &.{
+            .{
+                .kind = .conflicts,
+                .subject = &.{"--recursive"},
+                .others = &.{ "--own", "--own-absent" },
+                .why = "a key path names one file",
+            },
+            .{
+                .kind = .requires_any,
+                .subject = &.{"--gate"},
+                .others = &.{ "--own", "--own-absent" },
+            },
+            .{ .kind = .exclusive, .subject = &.{ "--json", "--porcelain" } },
+        },
+    };
+    try TR.renderCommand(arena_state.allocator(), &w, cmd);
+    const got = w.buffered();
+
+    try testing.expect(std.mem.indexOf(u8, got,
+        \\
+        \\Constraints:
+        \\  --recursive cannot combine with --own, --own-absent (a key path names one file)
+        \\  --gate requires one of --own, --own-absent
+        \\  at most one of --json, --porcelain
+        \\
+    ) != null);
+}
+
+test "renderCommand omits the Constraints section for a command that declares none" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+
+    var buf: [512]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+
+    try TR.renderCommand(arena_state.allocator(), &w, TestCommand{ .name = "plain" });
+    try testing.expect(std.mem.indexOf(u8, w.buffered(), "Constraints:") == null);
 }
 
 test "renderCommand omits the Commands section for a leaf command with no subcommands" {

@@ -157,12 +157,35 @@ pub fn App(comptime cfg: anytype) type {
             flags: []const Flag = &.{},
             /// Positional/variadic slots derived from a Spec at comptime.
             args: []const Arg = &.{},
+            /// Every relation among this command's fields (`About.exclusive`,
+            /// `conflicts`, `requires`), kebab-spelled and flattened, so help
+            /// and schema state a constraint the parser already enforces
+            /// rather than leaving it to be discovered by tripping it.
+            constraints: []const Constraint = &.{},
+        };
+
+        /// One relation, as help and schema render it.
+        pub const Constraint = struct {
+            pub const Kind = enum {
+                /// At most one of `subject` (from `About.exclusive`).
+                exclusive,
+                /// No field of `subject` may accompany one of `others`.
+                conflicts,
+                /// `subject[0]` needs at least one of `others`.
+                requires_any,
+                /// `subject[0]` needs all of `others`.
+                requires_all,
+            };
+            kind: Kind,
+            subject: []const []const u8,
+            others: []const []const u8 = &.{},
+            why: []const u8 = "",
         };
 
         /// Renders help from `Command`/`Flag`/`Arg`/`cfg.Group` alone - the
         /// same metadata `command()` derives from a Spec, never a second
         /// hand-written help string.
-        const HelpRenderer = help.Renderer(Command, Flag, Arg, cfg.Group);
+        const HelpRenderer = help.Renderer(Command, Flag, Arg, cfg.Group, Constraint);
 
         /// Produces shell-completion candidates from `Command`/`Flag`/`Arg`
         /// alone, the same metadata help renders from.
@@ -179,7 +202,7 @@ pub fn App(comptime cfg: anytype) type {
 
         /// Emits the command table as JSON from `Command`/`Flag`/`Arg` alone,
         /// the same metadata help renders from.
-        const Schema = schema.Emitter(Command, Flag, Arg, cfg.Group);
+        const Schema = schema.Emitter(Command, Flag, Arg, cfg.Group, Constraint);
 
         /// Adapts `cfg.resolveCompletion` (whose `ctx` param is `anytype`,
         /// since `Ctx` cannot be named from outside `App(cfg)`, the same
@@ -320,7 +343,48 @@ pub fn App(comptime cfg: anytype) type {
             /// non-bool) field is always "provided" per `isProvided`, so
             /// putting one in a group makes that group perpetually conflict -
             /// only optional fields and bool flags belong in `exclusive`.
+            ///
+            /// Use this for a symmetric set ("at most one of these"). For one
+            /// set that rules out another while each side still combines
+            /// internally, see `conflicts`.
             exclusive: []const []const []const u8 = &.{},
+            /// Cross-set incompatibilities: any field from `any_of` provided
+            /// together with any field from `with` is a usage error. Unlike
+            /// `exclusive`, each side stays free to combine among itself --
+            /// `--own` and `--own-absent` pair while both rule out `-r`.
+            conflicts: []const Conflict = &.{},
+            /// Dependencies: fields that mean nothing without others.
+            requires: []const Requirement = &.{},
+        };
+
+        /// One cross-set incompatibility for `About.conflicts`. A lone field
+        /// is a one-element side, so the common "this rules out those" reads
+        /// `.{ .any_of = &.{"recursive"}, .with = &.{ "own", "gate" } }`.
+        pub const Conflict = struct {
+            any_of: []const []const u8,
+            with: []const []const u8,
+            /// Why these cannot combine, in the command's own vocabulary
+            /// ("own and disown are exclusive per file"). Rendered after the
+            /// rule in the usage error and in `--help`; empty prints the rule
+            /// alone. This is what makes declaring a relation better than
+            /// hand-rolling the check rather than merely equal to it: a
+            /// generic renderer can restate a rule, but only the author can
+            /// give its reason, and here that reason reaches the error text,
+            /// the help output, and the schema from one place.
+            why: []const u8 = "",
+        };
+
+        /// One dependency for `About.requires`: `field` is meaningless
+        /// without its companions. Exactly one of `any_of`/`all_of` carries
+        /// them; leaving both empty is a build error.
+        pub const Requirement = struct {
+            field: []const u8,
+            /// At least one of these must be provided alongside `field`.
+            any_of: []const []const u8 = &.{},
+            /// All of these must be provided alongside `field`.
+            all_of: []const []const u8 = &.{},
+            /// Why the dependency holds. See `Conflict.why`.
+            why: []const u8 = "",
         };
 
         /// Validates every field name in `about.exclusive` against `Spec` at
@@ -331,6 +395,48 @@ pub fn App(comptime cfg: anytype) type {
                 for (group) |name| {
                     if (!@hasField(Spec, name))
                         @compileError("exclusive constraint names \"" ++ name ++ "\", which is not a field of the schema");
+                }
+            }
+        }
+
+        /// True when `name` appears in `list`.
+        fn namesContain(comptime list: []const []const u8, comptime name: []const u8) bool {
+            for (list) |n| {
+                if (std.mem.eql(u8, n, name)) return true;
+            }
+            return false;
+        }
+
+        /// Comptime-validates `about.conflicts` and `about.requires` the way
+        /// `validateExclusive` does its own: every name must be a Spec field,
+        /// and a relation that could never hold is refused outright rather
+        /// than left to misfire at runtime. A field cannot conflict with or
+        /// require itself, and a requirement must name at least one
+        /// companion -- both are declaration mistakes with no useful
+        /// meaning, so they fail the build where they are written.
+        fn validateRelations(comptime Spec: type, comptime about: About) void {
+            for (about.conflicts) |c| {
+                if (c.any_of.len == 0 or c.with.len == 0)
+                    @compileError("a conflict needs a field on each side; one of them is empty");
+                for (c.any_of ++ c.with) |name| {
+                    if (!@hasField(Spec, name))
+                        @compileError("conflict names \"" ++ name ++ "\", which is not a field of the schema");
+                }
+                for (c.any_of) |name| {
+                    if (namesContain(c.with, name))
+                        @compileError("conflict lists \"" ++ name ++ "\" on both sides, so it could never be satisfied");
+                }
+            }
+            for (about.requires) |r| {
+                if (!@hasField(Spec, r.field))
+                    @compileError("requirement names \"" ++ r.field ++ "\", which is not a field of the schema");
+                if (r.any_of.len == 0 and r.all_of.len == 0)
+                    @compileError("requirement on \"" ++ r.field ++ "\" names no companion field");
+                for (r.any_of ++ r.all_of) |name| {
+                    if (!@hasField(Spec, name))
+                        @compileError("requirement names \"" ++ name ++ "\", which is not a field of the schema");
+                    if (std.mem.eql(u8, name, r.field))
+                        @compileError("requirement on \"" ++ r.field ++ "\" names itself as its own companion");
                 }
             }
         }
@@ -364,6 +470,120 @@ pub fn App(comptime cfg: anytype) type {
             return null;
         }
 
+        /// The first violated relation in `about.conflicts`/`about.requires`,
+        /// rendered as the usage message to print, or null when every one
+        /// holds. Conflicts are checked before requirements: with both
+        /// broken, the incompatibility is the more specific complaint, and
+        /// resolving it often satisfies the dependency too.
+        fn relationViolation(
+            comptime Spec: type,
+            comptime about: About,
+            parsed: args.Args(Spec),
+            alloc: std.mem.Allocator,
+        ) ?[]const u8 {
+            inline for (about.conflicts) |c| {
+                inline for (c.any_of) |a| {
+                    if (isProvided(Spec, parsed, a)) {
+                        inline for (c.with) |b| {
+                            if (isProvided(Spec, parsed, b)) {
+                                return std.fmt.allocPrint(alloc, "--{s} cannot combine with --{s}{s}", .{
+                                    comptime spec.kebab(a),
+                                    comptime spec.kebab(b),
+                                    comptime parenthesized(c.why),
+                                }) catch "conflicting flags";
+                            }
+                        }
+                    }
+                }
+            }
+            // `inline for` unrolls at comptime, so a `continue` driven by a
+            // runtime value is not available here: the body nests under the
+            // provided-check instead.
+            inline for (about.requires) |r| {
+                if (isProvided(Spec, parsed, r.field)) {
+                    if (r.any_of.len > 0) {
+                        var satisfied = false;
+                        inline for (r.any_of) |name| {
+                            if (isProvided(Spec, parsed, name)) satisfied = true;
+                        }
+                        if (!satisfied) {
+                            return std.fmt.allocPrint(alloc, "--{s} requires one of {s}{s}", .{
+                                comptime spec.kebab(r.field),
+                                comptime spelledList(r.any_of),
+                                comptime parenthesized(r.why),
+                            }) catch "missing a required companion flag";
+                        }
+                    }
+                    inline for (r.all_of) |name| {
+                        if (!isProvided(Spec, parsed, name)) {
+                            return std.fmt.allocPrint(alloc, "--{s} requires --{s}{s}", .{
+                                comptime spec.kebab(r.field),
+                                comptime spec.kebab(name),
+                                comptime parenthesized(r.why),
+                            }) catch "missing a required companion flag";
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        /// Every relation on `about`, kebab-spelled once at comptime, in the
+        /// order a reader meets them: what cannot combine, then what depends
+        /// on what. Help and schema both render from this, so neither can
+        /// describe a constraint the trampoline does not enforce.
+        fn deriveConstraints(comptime about: About) []const Constraint {
+            comptime var out: []const Constraint = &.{};
+            inline for (about.exclusive) |group| {
+                out = out ++ [_]Constraint{.{ .kind = .exclusive, .subject = spelledNames(group) }};
+            }
+            inline for (about.conflicts) |c| {
+                out = out ++ [_]Constraint{.{
+                    .kind = .conflicts,
+                    .subject = spelledNames(c.any_of),
+                    .others = spelledNames(c.with),
+                    .why = c.why,
+                }};
+            }
+            inline for (about.requires) |r| {
+                if (r.any_of.len > 0) out = out ++ [_]Constraint{.{
+                    .kind = .requires_any,
+                    .subject = spelledNames(&.{r.field}),
+                    .others = spelledNames(r.any_of),
+                    .why = r.why,
+                }};
+                if (r.all_of.len > 0) out = out ++ [_]Constraint{.{
+                    .kind = .requires_all,
+                    .subject = spelledNames(&.{r.field}),
+                    .others = spelledNames(r.all_of),
+                    .why = r.why,
+                }};
+            }
+            return out;
+        }
+
+        /// `names` in their argv spelling, kebab-cased and dash-prefixed.
+        fn spelledNames(comptime names: []const []const u8) []const []const u8 {
+            comptime var out: []const []const u8 = &.{};
+            inline for (names) |n| out = out ++ [_][]const u8{"--" ++ spec.kebab(n)};
+            return out;
+        }
+
+        /// `" (why)"`, or nothing when the author gave no reason.
+        fn parenthesized(comptime why: []const u8) []const u8 {
+            return if (why.len == 0) "" else " (" ++ why ++ ")";
+        }
+
+        /// `names` kebab-spelled, dash-prefixed, comma-joined: the form a
+        /// requirement message lists its alternatives in.
+        fn spelledList(comptime names: []const []const u8) []const u8 {
+            comptime var out: []const u8 = "";
+            inline for (names, 0..) |n, i| {
+                out = out ++ (if (i == 0) "" else ", ") ++ "--" ++ spec.kebab(n);
+            }
+            return out;
+        }
+
         /// Builds a `Command` from a typed Spec: derives its flags/args
         /// metadata at comptime, and wraps `run_fn` in a trampoline that
         /// parses `ctx.argv` into `args.Args(Spec)` before calling it. A
@@ -377,6 +597,7 @@ pub fn App(comptime cfg: anytype) type {
             comptime run_fn: fn (ctx: *Ctx, parsed: args.Args(Spec)) anyerror!u8,
         ) Command {
             comptime validateExclusive(Spec, about);
+            comptime validateRelations(Spec, about);
 
             const Trampoline = struct {
                 fn run(ctx: *Ctx) anyerror!u8 {
@@ -408,6 +629,10 @@ pub fn App(comptime cfg: anytype) type {
                         writeUsageError(ctx.err, message_prefix, msg, about.usage);
                         return 2;
                     }
+                    if (relationViolation(Spec, about, parsed, arena_state.allocator())) |msg| {
+                        writeUsageError(ctx.err, message_prefix, msg, about.usage);
+                        return 2;
+                    }
                     return run_fn(ctx, parsed);
                 }
             };
@@ -421,6 +646,7 @@ pub fn App(comptime cfg: anytype) type {
                 .needs_context = about.needs_context,
                 .flags = comptime deriveFlags(Spec),
                 .args = comptime deriveArgs(Spec),
+                .constraints = comptime deriveConstraints(about),
                 .run = &Trampoline.run,
             };
         }
@@ -1159,6 +1385,152 @@ const ExclusiveSpec = struct {
     a: spec.Opt([]const u8, .{}),
     b: spec.Opt([]const u8, .{}),
 };
+
+/// The shape that motivated `conflicts`/`requires`: a recursive mode that
+/// rules out three per-file options, two of which pair with each other, and
+/// a fourth that is meaningless without one of them. `exclusive` alone can
+/// say none of this -- it would forbid `own`+`own_absent` together.
+const RelationSpec = struct {
+    recursive: spec.Flag(.{}),
+    own: spec.Opt([]const u8, .{}),
+    own_absent: spec.Opt([]const u8, .{}),
+    gate: spec.Opt([]const u8, .{}),
+};
+
+fn relationCommand(comptime TestApp: type, called: *bool) TestApp.Command {
+    const S = struct {
+        fn r(_: *TestApp.Ctx, _: args.Args(RelationSpec)) anyerror!u8 {
+            return 0;
+        }
+    };
+    _ = called;
+    return TestApp.command(RelationSpec, .{
+        .name = "add",
+        .group = .general,
+        .conflicts = &.{.{
+            .any_of = &.{"recursive"},
+            .with = &.{ "own", "own_absent", "gate" },
+            .why = "a key path names one file",
+        }},
+        .requires = &.{.{
+            .field = "gate",
+            .any_of = &.{ "own", "own_absent" },
+            .why = "a gate attaches to an ownership declaration",
+        }},
+    }, S.r);
+}
+
+test "About.conflicts rejects a cross-set pair and keeps each side combinable" {
+    const TestApp = App(.{
+        .Context = void,
+        .Group = enum { general },
+        .loadContext = testNoopLoadContext,
+    });
+    var called = false;
+    const cmd = relationCommand(TestApp, &called);
+
+    // The conflict fires, and the message carries the author's reason.
+    {
+        var out_buf: [64]u8 = undefined;
+        var out_w = std.Io.Writer.fixed(&out_buf);
+        var err_buf: [256]u8 = undefined;
+        var err_w = std.Io.Writer.fixed(&err_buf);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "add", "--recursive", "--own", "k" }, &.{cmd}, &out_w, &err_w);
+        try std.testing.expectEqual(@as(u8, 2), code);
+        try std.testing.expect(std.mem.indexOf(u8, err_w.buffered(), "--recursive cannot combine with --own (a key path names one file)") != null);
+    }
+
+    // Both sides of the conflict still combine among themselves: this is
+    // exactly what `exclusive` could not express.
+    {
+        var out_buf: [64]u8 = undefined;
+        var out_w = std.Io.Writer.fixed(&out_buf);
+        var err_buf: [256]u8 = undefined;
+        var err_w = std.Io.Writer.fixed(&err_buf);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "add", "--own", "k", "--own-absent", "j" }, &.{cmd}, &out_w, &err_w);
+        try std.testing.expectEqual(@as(u8, 0), code);
+        try std.testing.expectEqualStrings("", err_w.buffered());
+    }
+}
+
+test "About.requires demands a companion, and is satisfied by any one of them" {
+    const TestApp = App(.{
+        .Context = void,
+        .Group = enum { general },
+        .loadContext = testNoopLoadContext,
+    });
+    var called = false;
+    const cmd = relationCommand(TestApp, &called);
+
+    {
+        var out_buf: [64]u8 = undefined;
+        var out_w = std.Io.Writer.fixed(&out_buf);
+        var err_buf: [256]u8 = undefined;
+        var err_w = std.Io.Writer.fixed(&err_buf);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "add", "--gate", "os=linux" }, &.{cmd}, &out_w, &err_w);
+        try std.testing.expectEqual(@as(u8, 2), code);
+        try std.testing.expect(std.mem.indexOf(
+            u8,
+            err_w.buffered(),
+            "--gate requires one of --own, --own-absent (a gate attaches to an ownership declaration)",
+        ) != null);
+    }
+
+    // Either companion satisfies it.
+    for ([_][]const u8{ "--own", "--own-absent" }) |companion| {
+        var out_buf: [64]u8 = undefined;
+        var out_w = std.Io.Writer.fixed(&out_buf);
+        var err_buf: [256]u8 = undefined;
+        var err_w = std.Io.Writer.fixed(&err_buf);
+        const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "add", "--gate", "os=linux", companion, "k" }, &.{cmd}, &out_w, &err_w);
+        try std.testing.expectEqual(@as(u8, 0), code);
+    }
+}
+
+test "a conflict is reported ahead of a requirement broken by the same argv" {
+    const TestApp = App(.{
+        .Context = void,
+        .Group = enum { general },
+        .loadContext = testNoopLoadContext,
+    });
+    var called = false;
+    const cmd = relationCommand(TestApp, &called);
+
+    // `--recursive --gate` breaks both rules at once. The incompatibility is
+    // the more specific complaint, and dropping one of the two often
+    // satisfies the dependency as well.
+    var out_buf: [64]u8 = undefined;
+    var out_w = std.Io.Writer.fixed(&out_buf);
+    var err_buf: [256]u8 = undefined;
+    var err_w = std.Io.Writer.fixed(&err_buf);
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "add", "--recursive", "--gate", "os=linux" }, &.{cmd}, &out_w, &err_w);
+    try std.testing.expectEqual(@as(u8, 2), code);
+    try std.testing.expect(std.mem.indexOf(u8, err_w.buffered(), "cannot combine with") != null);
+    try std.testing.expect(std.mem.indexOf(u8, err_w.buffered(), "requires one of") == null);
+}
+
+test "command() derives a Constraint per declared relation, argv-spelled" {
+    const TestApp = App(.{
+        .Context = void,
+        .Group = enum { general },
+        .loadContext = testNoopLoadContext,
+    });
+    var called = false;
+    const cmd = relationCommand(TestApp, &called);
+
+    try std.testing.expectEqual(@as(usize, 2), cmd.constraints.len);
+
+    const conflict = cmd.constraints[0];
+    try std.testing.expectEqual(TestApp.Constraint.Kind.conflicts, conflict.kind);
+    try std.testing.expectEqualStrings("--recursive", conflict.subject[0]);
+    // Kebab-cased, exactly as argv accepts it -- never the Zig field name.
+    try std.testing.expectEqualStrings("--own-absent", conflict.others[1]);
+    try std.testing.expectEqualStrings("a key path names one file", conflict.why);
+
+    const requirement = cmd.constraints[1];
+    try std.testing.expectEqual(TestApp.Constraint.Kind.requires_any, requirement.kind);
+    try std.testing.expectEqualStrings("--gate", requirement.subject[0]);
+}
 
 test "command() trampoline enforces About.exclusive and never calls run_fn on conflict" {
     const TestApp = App(.{
@@ -2658,7 +3030,7 @@ test "run intercepts __schema and writes the command table as a versioned JSON e
     try std.testing.expectEqualStrings("", err_w.buffered());
     const out = out_w.buffered();
     try std.testing.expect(std.mem.startsWith(u8, out, "{"));
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"version\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"version\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"program\":\"app\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"commands\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"name\":\"greet\"") != null);

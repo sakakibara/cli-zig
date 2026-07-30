@@ -6,6 +6,35 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `About.conflicts` and `About.requires`: the flag relations `exclusive`
+  cannot express. `conflicts` rules one set out against another while each
+  side stays free to combine internally (`--own` pairs with `--own-absent`,
+  and both rule out `--recursive`); `requires` names the companions a field is
+  meaningless without, by `any_of` or `all_of`. Both are comptime-checked
+  against the Spec like `exclusive`, and additionally reject a rule that could
+  never hold -- a field on both sides of a conflict, or a requirement naming
+  itself as its own companion.
+- Both carry a `why`: the reason, in the command's own vocabulary. One
+  declaration feeds the usage error, `--help`, and the schema, so an app
+  states a constraint once instead of hand-rolling the check and then
+  restating it in prose.
+- `--help` gains a `Constraints:` section listing every relation -- including
+  `exclusive` groups, which until now appeared nowhere in help output.
+- `Command.constraints` exposes those relations to any renderer, and the
+  schema emits them per command as `constraints`.
+
+### Changed
+
+- **Breaking (internal):** `help.Renderer` and `schema.Emitter` take a
+  `Constraint` type parameter alongside `Command`/`Flag`/`Arg`/`Group`. An app
+  built on `App(cfg)` is unaffected; only a caller instantiating those
+  renderers directly passes the extra argument.
+- The schema envelope's `version` is now `2`: every command object carries a
+  `constraints` array, empty when the command declares none. A version-1
+  reader that ignores unknown keys needs no change.
+
 ## [0.2.0] - 2026-07-26
 
 ### Changed

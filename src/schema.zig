@@ -7,7 +7,11 @@ const meta = @import("meta.zig");
 
 /// The schema envelope's `version` field. Bumped whenever the emitted shape
 /// changes in a way a consumer must branch on.
-pub const schema_version = 1;
+///
+/// 2 added a `constraints` array to every command object (see
+/// `writeConstraint`); it is always present, empty when a command declares no
+/// relations, so a version-1 reader that ignores unknown keys still parses.
+pub const schema_version = 2;
 
 /// Writes `s` as a `"`-quoted JSON string, escaping per the JSON spec.
 fn writeJsonString(w: *std.Io.Writer, s: []const u8) !void {
@@ -61,7 +65,7 @@ fn writeComplete(w: *std.Io.Writer, c: meta.Complete) !void {
 /// A view over a caller's command table: `Emitter(Command, Flag, Arg,
 /// Group)` reads only the fields listed in the module doc, mirroring how
 /// `help.Renderer` and `complete.Completion` read the same generic shapes.
-pub fn Emitter(comptime Command: type, comptime Flag: type, comptime Arg: type, comptime Group: type) type {
+pub fn Emitter(comptime Command: type, comptime Flag: type, comptime Arg: type, comptime Group: type, comptime Constraint: type) type {
     // Group is part of the signature to mirror help.Renderer/complete.Completion,
     // even though @tagName below reads it off cmd.group's own type.
     _ = Group;
@@ -130,6 +134,13 @@ pub fn Emitter(comptime Command: type, comptime Flag: type, comptime Arg: type, 
             }
             try w.writeByte(']');
 
+            try w.writeAll(",\"constraints\":[");
+            for (cmd.constraints, 0..) |c, i| {
+                if (i > 0) try w.writeByte(',');
+                try writeConstraint(w, c);
+            }
+            try w.writeByte(']');
+
             try w.writeAll(",\"subcommands\":[");
             for (cmd.subcommands, 0..) |sub, i| {
                 if (i > 0) try w.writeByte(',');
@@ -137,6 +148,27 @@ pub fn Emitter(comptime Command: type, comptime Flag: type, comptime Arg: type, 
             }
             try w.writeByte(']');
 
+            try w.writeByte('}');
+        }
+
+        /// One relation among a command's flags. Emitted so a consumer that
+        /// builds a call from this schema can honor a constraint the parser
+        /// enforces, instead of discovering it from a rejected invocation.
+        fn writeConstraint(w: *std.Io.Writer, c: Constraint) !void {
+            try w.writeAll("{\"kind\":");
+            try writeJsonString(w, @tagName(c.kind));
+            try w.writeAll(",\"subject\":[");
+            for (c.subject, 0..) |n, i| {
+                if (i > 0) try w.writeByte(',');
+                try writeJsonString(w, n);
+            }
+            try w.writeAll("],\"others\":[");
+            for (c.others, 0..) |n, i| {
+                if (i > 0) try w.writeByte(',');
+                try writeJsonString(w, n);
+            }
+            try w.writeAll("],\"why\":");
+            try writeJsonString(w, c.why);
             try w.writeByte('}');
         }
 
@@ -187,9 +219,60 @@ const TestCommand = struct {
     flags: []const TestFlag = &.{},
     args: []const TestArg = &.{},
     subcommands: []const TestCommand = &.{},
+    constraints: []const TestConstraint = &.{},
 };
 
-const TE = Emitter(TestCommand, TestFlag, TestArg, TestGroup);
+/// Mirrors `App(cfg).Constraint`, which the generic renderer/emitter never
+/// see directly -- they take whatever shape the app monomorphized.
+const TestConstraint = struct {
+    kind: enum { exclusive, conflicts, requires_any, requires_all },
+    subject: []const []const u8,
+    others: []const []const u8 = &.{},
+    why: []const u8 = "",
+};
+
+const TE = Emitter(TestCommand, TestFlag, TestArg, TestGroup, TestConstraint);
+
+test "emit carries each constraint so a consumer honors it without a rejected call" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    var aw: std.Io.Writer.Allocating = .init(arena_state.allocator());
+
+    const cmd = TestCommand{
+        .name = "add",
+        .constraints = &.{.{
+            .kind = .conflicts,
+            .subject = &.{"--recursive"},
+            .others = &.{"--own"},
+            .why = "a key path names one file",
+        }},
+    };
+    try TE.emit(&aw.writer, "app", &.{cmd});
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, aw.written(), .{});
+    defer parsed.deinit();
+    const constraints = parsed.value.object.get("commands").?.array.items[0]
+        .object.get("constraints").?.array;
+    try testing.expectEqual(@as(usize, 1), constraints.items.len);
+
+    const c = constraints.items[0].object;
+    try testing.expectEqualStrings("conflicts", c.get("kind").?.string);
+    try testing.expectEqualStrings("--recursive", c.get("subject").?.array.items[0].string);
+    try testing.expectEqualStrings("--own", c.get("others").?.array.items[0].string);
+    try testing.expectEqualStrings("a key path names one file", c.get("why").?.string);
+}
+
+test "emit gives a constraint-free command an empty constraints array, never a missing key" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    var aw: std.Io.Writer.Allocating = .init(arena_state.allocator());
+
+    try TE.emit(&aw.writer, "app", &.{TestCommand{ .name = "plain" }});
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, aw.written(), .{});
+    defer parsed.deinit();
+    const c = parsed.value.object.get("commands").?.array.items[0].object.get("constraints").?;
+    try testing.expectEqual(@as(usize, 0), c.array.items.len);
+}
 
 test "emit writes a JSON envelope containing a command's name and a flag's long name under commands" {
     var buf: [1024]u8 = undefined;
@@ -205,7 +288,7 @@ test "emit writes a JSON envelope containing a command's name and a flag's long 
     const got = w.buffered();
 
     try testing.expect(std.mem.startsWith(u8, got, "{"));
-    try testing.expect(std.mem.indexOf(u8, got, "\"version\":1") != null);
+    try testing.expect(std.mem.indexOf(u8, got, "\"version\":2") != null);
     try testing.expect(std.mem.indexOf(u8, got, "\"program\":\"app\"") != null);
     try testing.expect(std.mem.indexOf(u8, got, "\"commands\":[") != null);
     try testing.expect(std.mem.indexOf(u8, got, "\"name\":\"greet\"") != null);
@@ -278,7 +361,7 @@ test "emit round-trips through std.json as a versioned envelope object, with a g
     defer parsed.deinit();
 
     const envelope = parsed.value.object;
-    try testing.expectEqual(@as(i64, 1), envelope.get("version").?.integer);
+    try testing.expectEqual(@as(i64, 2), envelope.get("version").?.integer);
     try testing.expectEqualStrings("app", envelope.get("program").?.string);
 
     const arr = envelope.get("commands").?.array;
