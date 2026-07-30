@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-31
+
 ### Added
 
 - `About.conflicts` and `About.requires`: the flag relations `exclusive`
