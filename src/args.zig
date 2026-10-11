@@ -12,14 +12,15 @@ const resolve = @import("resolve.zig");
 /// positional(T)->T (required) or ?T (default null) when meta.optional,
 /// variadic->[]const []const u8 (default &.{}). Field names match the Spec.
 pub fn Args(comptime Spec: type) type {
-    const Attributes = std.builtin.Type.StructField.Attributes;
-    const src_fields = @typeInfo(Spec).@"struct".fields;
-    var names: [src_fields.len][:0]const u8 = undefined;
-    var types: [src_fields.len]type = undefined;
-    var attrs: [src_fields.len]Attributes = undefined;
-    inline for (src_fields, 0..) |f, i| {
-        const info = @field(f.type, "arg_info");
-        names[i] = f.name;
+    const Attributes = std.builtin.Type.Struct.FieldAttributes;
+    const src_field_types = @typeInfo(Spec).@"struct".field_types;
+    const src_field_names = @typeInfo(Spec).@"struct".field_names;
+    var names: [src_field_types.len][:0]const u8 = undefined;
+    var types: [src_field_types.len]type = undefined;
+    var attrs: [src_field_types.len]Attributes = undefined;
+    inline for (src_field_types, src_field_names, 0..) |ftype, fname, i| {
+        const info = @field(ftype, "arg_info");
+        names[i] = fname;
         types[i] = switch (info.kind) {
             .flag => bool,
             .option => ?info.Value,
@@ -48,13 +49,13 @@ test "Args(Spec) maps each field to its parsed value type" {
         rest: spec.Rest(.{}),
     };
     const A = Args(Spec);
-    const fields = @typeInfo(A).@"struct".fields;
+    const num_fields = @typeInfo(A).@"struct".field_types.len;
     try std.testing.expectEqual(bool, @FieldType(A, "json"));
     try std.testing.expectEqual(?u16, @FieldType(A, "port"));
     try std.testing.expectEqual([]const u8, @FieldType(A, "name"));
     try std.testing.expectEqual(?[]const u8, @FieldType(A, "tags"));
     try std.testing.expectEqual([]const []const u8, @FieldType(A, "rest"));
-    try std.testing.expectEqual(@as(usize, 5), fields.len);
+    try std.testing.expectEqual(@as(usize, 5), num_fields);
 
     const a: A = .{ .name = "x" };
     try std.testing.expectEqual(false, a.json);
@@ -126,13 +127,14 @@ pub fn parseInto(comptime Spec: type, alloc: std.mem.Allocator, argv: []const []
     defer p.deinit();
 
     var result: Args(Spec) = undefined;
-    const fields = @typeInfo(Spec).@"struct".fields;
+    const field_types = @typeInfo(Spec).@"struct".field_types;
+    const field_names = @typeInfo(Spec).@"struct".field_names;
 
     // Register every flag/option's short char up front so a clustered token
     // (`-abc`) can be decomposed against the full set, regardless of which
     // field's `flag`/`option` call reaches it first.
-    inline for (fields) |f| {
-        const info = @field(f.type, "arg_info");
+    inline for (field_types) |ftype| {
+        const info = @field(ftype, "arg_info");
         if (info.meta.short) |s| {
             switch (info.kind) {
                 .flag => try p.registerShort(s, .flag),
@@ -142,24 +144,24 @@ pub fn parseInto(comptime Spec: type, alloc: std.mem.Allocator, argv: []const []
         }
     }
 
-    inline for (fields) |f| {
-        const info = @field(f.type, "arg_info");
+    inline for (field_types, field_names) |ftype, fname| {
+        const info = @field(ftype, "arg_info");
         switch (info.kind) {
             .flag => {
-                const long = comptime spec.kebab(f.name);
-                @field(result, f.name) = p.flag(long, info.meta.short) catch |e| switch (e) {
+                const long = comptime spec.kebab(fname);
+                @field(result, fname) = p.flag(long, info.meta.short) catch |e| switch (e) {
                     error.OutOfMemory => return e,
                     error.UsageError => return usageError(alloc, diag, "{s}", .{p.message}),
                 };
             },
             .option => {
-                const long = comptime spec.kebab(f.name);
+                const long = comptime spec.kebab(fname);
                 const opt = p.option(long, info.meta.short) catch |e| switch (e) {
                     error.OutOfMemory => return e,
                     error.UsageError => return usageError(alloc, diag, "{s}", .{p.message}),
                 };
-                const raw = opt orelse fallback(info.meta, f.name, source);
-                @field(result, f.name) = if (raw) |s|
+                const raw = opt orelse fallback(info.meta, fname, source);
+                @field(result, fname) = if (raw) |s|
                     resolve.parseValue(info.Value, s) catch
                         return usageError(alloc, diag, "--" ++ long ++ " requires {s}, got \"{s}\"", .{ resolve.typeDesc(info.Value), s })
                 else
@@ -173,33 +175,33 @@ pub fn parseInto(comptime Spec: type, alloc: std.mem.Allocator, argv: []const []
     // must never dip past a lone "--": every post-"--" token belongs to the
     // variadic exclusively. Computed once, order-independent.
     const has_rest = comptime blk: {
-        for (fields) |f| {
-            if (@field(f.type, "arg_info").kind == .variadic) break :blk true;
+        for (field_types) |ftype| {
+            if (@field(ftype, "arg_info").kind == .variadic) break :blk true;
         }
         break :blk false;
     };
 
     // Fixed positionals resolve before the variadic, regardless of field
     // order.
-    inline for (fields) |f| {
-        const info = @field(f.type, "arg_info");
+    inline for (field_types, field_names) |ftype, fname| {
+        const info = @field(ftype, "arg_info");
         if (info.kind == .positional) {
-            const raw = p.positional(!has_rest) orelse fallback(info.meta, f.name, source);
+            const raw = p.positional(!has_rest) orelse fallback(info.meta, fname, source);
             if (raw) |s| {
-                @field(result, f.name) = resolve.parseValue(info.Value, s) catch
-                    return usageError(alloc, diag, f.name ++ " requires {s}, got \"{s}\"", .{ resolve.typeDesc(info.Value), s });
+                @field(result, fname) = resolve.parseValue(info.Value, s) catch
+                    return usageError(alloc, diag, fname ++ " requires {s}, got \"{s}\"", .{ resolve.typeDesc(info.Value), s });
             } else if (info.meta.optional) {
-                @field(result, f.name) = null;
+                @field(result, fname) = null;
             } else {
-                return usageError(alloc, diag, "missing required argument: " ++ f.name, .{});
+                return usageError(alloc, diag, "missing required argument: " ++ fname, .{});
             }
         }
     }
 
-    inline for (fields) |f| {
-        const info = @field(f.type, "arg_info");
+    inline for (field_types, field_names) |ftype, fname| {
+        const info = @field(ftype, "arg_info");
         if (info.kind == .variadic) {
-            @field(result, f.name) = try p.rest();
+            @field(result, fname) = try p.rest();
         }
     }
 
@@ -211,9 +213,9 @@ pub fn parseInto(comptime Spec: type, alloc: std.mem.Allocator, argv: []const []
     // Re-own the variadic tail in `alloc`: `rest` hands back a
     // Parser-owned array that `deinit` frees on return. Done after `finish`
     // so a failed parse never allocates it.
-    inline for (fields) |f| {
-        if (@field(f.type, "arg_info").kind == .variadic) {
-            @field(result, f.name) = try alloc.dupe([]const u8, @field(result, f.name));
+    inline for (field_types, field_names) |ftype, fname| {
+        if (@field(ftype, "arg_info").kind == .variadic) {
+            @field(result, fname) = try alloc.dupe([]const u8, @field(result, fname));
         }
     }
 

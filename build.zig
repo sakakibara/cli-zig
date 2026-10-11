@@ -45,7 +45,7 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(fuzz_exe);
     const run_fuzz = b.addRunArtifact(fuzz_exe);
-    if (b.args) |a| run_fuzz.addArgs(a);
+    run_fuzz.addPassthruArgs();
     const fuzz_step = b.step("fuzz", "Run the bounded argv-parser fuzzer");
     fuzz_step.dependOn(&run_fuzz.step);
 
