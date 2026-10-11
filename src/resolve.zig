@@ -33,9 +33,9 @@ pub fn typeDesc(comptime T: type) []const u8 {
         .bool => "true or false",
         .@"enum" => |e| comptime blk: {
             var desc: []const u8 = "one of: ";
-            for (e.fields, 0..) |f, i| {
+            for (e.field_names, 0..) |fname, i| {
                 if (i != 0) desc = desc ++ ", ";
-                desc = desc ++ f.name;
+                desc = desc ++ fname;
             }
             break :blk desc;
         },

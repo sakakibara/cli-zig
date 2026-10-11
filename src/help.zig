@@ -95,14 +95,14 @@ pub fn Renderer(comptime Command: type, comptime Flag: type, comptime Arg: type,
 
             try w.print("Usage: {s} <command> [flags]\n", .{prog_name});
 
-            inline for (@typeInfo(Group).@"enum".fields) |f| {
-                const g = @field(Group, f.name);
+            inline for (@typeInfo(Group).@"enum".field_names) |fname| {
+                const g = @field(Group, fname);
                 var any = false;
                 for (commands) |c| {
                     if (c.group == g) any = true;
                 }
                 if (any) {
-                    const heading = if (group_heading) |gh| gh(g) else f.name;
+                    const heading = if (group_heading) |gh| gh(g) else fname;
                     try w.print("\n{s}:\n", .{heading});
                     for (commands) |c| {
                         if (c.group != g) continue;
