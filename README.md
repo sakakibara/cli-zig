@@ -61,7 +61,7 @@ const commands = [_]App.Command{
 
 ## Install
 
-Requires Zig 0.16.0 or newer.
+Requires Zig 0.17.
 
 ```sh
 zig fetch --save git+https://github.com/sakakibara/cli-zig

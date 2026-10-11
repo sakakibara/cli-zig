@@ -34,10 +34,12 @@ pub const Arg = struct {
 fn deriveFlags(comptime Spec: type) []const Flag {
     comptime {
         var flags: []const Flag = &.{};
-        for (@typeInfo(Spec).@"struct".fields) |f| {
-            const info = @field(f.type, "arg_info");
+        const field_names = @typeInfo(Spec).@"struct".field_names;
+        const field_types = @typeInfo(Spec).@"struct".field_types;
+        for (field_types, field_names) |ftype, fname| {
+            const info = @field(ftype, "arg_info");
             if (info.kind != .flag and info.kind != .option) continue;
-            const long = spec.kebab(f.name);
+            const long = spec.kebab(fname);
             flags = flags ++ [_]Flag{.{
                 .long = long,
                 .short = info.meta.short,
@@ -54,11 +56,13 @@ fn deriveFlags(comptime Spec: type) []const Flag {
 fn deriveArgs(comptime Spec: type) []const Arg {
     comptime {
         var out: []const Arg = &.{};
-        for (@typeInfo(Spec).@"struct".fields) |f| {
-            const info = @field(f.type, "arg_info");
+        const field_names = @typeInfo(Spec).@"struct".field_names;
+        const field_types = @typeInfo(Spec).@"struct".field_types;
+        for (field_types, field_names) |ftype, fname| {
+            const info = @field(ftype, "arg_info");
             if (info.kind != .positional and info.kind != .variadic) continue;
             out = out ++ [_]Arg{.{
-                .name = f.name,
+                .name = fname,
                 .help = info.meta.help,
                 .complete = info.meta.complete,
                 .optional = info.meta.optional or info.kind == .variadic,
@@ -1122,9 +1126,9 @@ test "editDistance: identical strings are zero, one substitution/insertion/delet
 }
 
 test "editDistance: degrades to the length difference past the 31-byte row cap" {
-    const long_a = "a" ** 32;
-    const long_b = "a" ** 40;
-    try std.testing.expectEqual(@as(usize, 8), editDistance(long_a, long_b));
+    const long_a: [32]u8 = @splat('a');
+    const long_b: [40]u8 = @splat('a');
+    try std.testing.expectEqual(@as(usize, 8), editDistance(&long_a, &long_b));
 }
 
 test "App.run renders top-level help grouped by command when no command is given" {
