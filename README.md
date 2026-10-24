@@ -260,12 +260,14 @@ envelope, for a caller that wants the command surface without parsing
 `--help` text:
 
 ```json
-{"version":1,"program":"app","commands":[
-  {"name":"deploy","summary":"deploy to an environment","usage":"app deploy --env <env>",
+{"version":2,"program":"app","commands":[
+  {"name":"deploy","summary":"deploy to an environment","usage":"app deploy --env <env> <service>",
    "group":"general","details":"","needs_context":false,
    "flags":[{"long":"env","short":null,"help":"target environment","takes_value":true,
              "value_name":"value","complete":{"kind":"choices","values":["dev","staging","prod"]}}],
-   "args":[],"subcommands":[]}
+   "args":[{"name":"service","help":"service to deploy","optional":false,"variadic":false,
+            "complete":{"kind":"none"}}],
+   "constraints":[],"subcommands":[]}
 ]}
 ```
 
