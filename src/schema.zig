@@ -6,11 +6,14 @@ const std = @import("std");
 const meta = @import("meta.zig");
 
 /// The schema envelope's `version` field. Bumped whenever the emitted shape
-/// changes in a way a consumer must branch on.
+/// changes in a way a consumer must branch on: a key whose absence would make
+/// a consumer's calls wrong. A descriptive key, such as an arg's `help`, is
+/// added without a bump.
 ///
 /// 2 added a `constraints` array to every command object (see
 /// `writeConstraint`); it is always present, empty when a command declares no
-/// relations, so a version-1 reader that ignores unknown keys still parses.
+/// relations, so a version-1 reader that ignores unknown keys still parses,
+/// but a consumer building calls must honor it.
 pub const schema_version = 2;
 
 /// Writes `s` as a `"`-quoted JSON string, escaping per the JSON spec.
@@ -97,6 +100,8 @@ pub fn Emitter(comptime Command: type, comptime Flag: type, comptime Arg: type, 
         fn writeArg(w: *std.Io.Writer, a: Arg) !void {
             try w.writeAll("{\"name\":");
             try writeJsonString(w, a.name);
+            try w.writeAll(",\"help\":");
+            try writeJsonString(w, a.help);
             try w.writeAll(",\"optional\":");
             try writeBool(w, a.optional);
             try w.writeAll(",\"variadic\":");
@@ -204,6 +209,7 @@ const TestFlag = struct {
 
 const TestArg = struct {
     name: []const u8,
+    help: []const u8 = "",
     complete: meta.Complete = .none,
     optional: bool = false,
     variadic: bool = false,
@@ -411,4 +417,14 @@ test "emit recurses a 3-level subcommand tree, nesting the deepest command under
     const c_cmd = c_subs.items[0].object;
     try testing.expectEqualStrings("c", c_cmd.get("name").?.string);
     try testing.expectEqualStrings("cflag", c_cmd.get("flags").?.array.items[0].object.get("long").?.string);
+}
+
+test "emit carries a positional's help text" {
+    var buf: [1024]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+
+    const table = [_]TestCommand{.{ .name = "get", .args = &.{.{ .name = "eid", .help = "encoded id" }} }};
+
+    try TE.emit(&w, "app", &table);
+    try testing.expect(std.mem.indexOf(u8, w.buffered(), "{\"name\":\"eid\",\"help\":\"encoded id\",") != null);
 }

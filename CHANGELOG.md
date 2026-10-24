@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- A positional's `help` text now appears beside it under `Args:` in its
+  command's `--help`, and as `help` on its entry in the `__schema` JSON, as
+  `Meta.help` documents. It was dropped from both. The schema version stays
+  2: the key is new, and a reader that ignores unknown keys parses it as
+  before.
+
 ## [0.3.0] - 2026-07-31
 
 ### Added

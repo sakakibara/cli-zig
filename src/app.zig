@@ -25,6 +25,7 @@ pub const Flag = struct {
 /// One positional/variadic slot, derived the same way.
 pub const Arg = struct {
     name: []const u8,
+    help: []const u8 = "",
     complete: meta.Complete = .none,
     optional: bool = false,
     variadic: bool = false,
@@ -58,6 +59,7 @@ fn deriveArgs(comptime Spec: type) []const Arg {
             if (info.kind != .positional and info.kind != .variadic) continue;
             out = out ++ [_]Arg{.{
                 .name = f.name,
+                .help = info.meta.help,
                 .complete = info.meta.complete,
                 .optional = info.meta.optional or info.kind == .variadic,
                 .variadic = info.kind == .variadic,
@@ -1280,6 +1282,39 @@ test "command() trampoline parses argv into typed values and calls run_fn" {
     try std.testing.expect(S.seen_verbose);
     try std.testing.expectEqual(@as(?u16, 9090), S.seen_port);
     try std.testing.expectEqualStrings("world", S.seen_name);
+}
+
+test "App.run carries a positional's help text into its command's --help and the schema" {
+    const TestApp = App(.{
+        .Context = void,
+        .Group = enum { general },
+        .loadContext = testNoopLoadContext,
+    });
+
+    const GetSpec = struct {
+        eid: spec.Pos([]const u8, .{ .help = "encoded id" }),
+    };
+    const S = struct {
+        fn r(_: *TestApp.Ctx, _: args.Args(GetSpec)) anyerror!u8 {
+            return 0;
+        }
+    };
+    const cmd = TestApp.command(GetSpec, .{ .name = "get", .group = .general }, S.r);
+
+    var out_buf: [256]u8 = undefined;
+    var out_w = std.Io.Writer.fixed(&out_buf);
+    var err_buf: [64]u8 = undefined;
+    var err_w = std.Io.Writer.fixed(&err_buf);
+
+    const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "get", "--help" }, &.{cmd}, &out_w, &err_w);
+    try std.testing.expectEqual(@as(u8, 0), code);
+    try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "\nArgs:\n  <eid>  encoded id\n") != null);
+
+    var schema_buf: [1024]u8 = undefined;
+    var schema_w = std.Io.Writer.fixed(&schema_buf);
+    const schema_code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "__schema" }, &.{cmd}, &schema_w, &err_w);
+    try std.testing.expectEqual(@as(u8, 0), schema_code);
+    try std.testing.expect(std.mem.indexOf(u8, schema_w.buffered(), "{\"name\":\"eid\",\"help\":\"encoded id\",") != null);
 }
 
 test "command() trampoline reports a bad parse to ctx.err and returns code 2" {

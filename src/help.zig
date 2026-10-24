@@ -170,10 +170,11 @@ pub fn Renderer(comptime Command: type, comptime Flag: type, comptime Arg: type,
                 for (cmd.args, labels) |a, l| {
                     try w.writeAll("  ");
                     try padTo(w, l, width);
+                    if (a.help.len > 0) try w.print("  {s}", .{a.help});
                     if (a.variadic) {
-                        try w.writeAll("  (variadic)");
+                        try w.writeAll(if (a.help.len > 0) " (variadic)" else "  (variadic)");
                     } else if (a.optional) {
-                        try w.writeAll("  (optional)");
+                        try w.writeAll(if (a.help.len > 0) " (optional)" else "  (optional)");
                     }
                     try w.writeByte('\n');
                 }
@@ -219,6 +220,7 @@ const TestFlag = struct {
 
 const TestArg = struct {
     name: []const u8,
+    help: []const u8 = "",
     optional: bool = false,
     variadic: bool = false,
 };
@@ -384,4 +386,26 @@ test "renderCommand omits the Commands section for a leaf command with no subcom
 
     try testing.expect(std.mem.indexOf(u8, got, "Commands:") == null);
     try testing.expect(std.mem.indexOf(u8, got, "<command>") == null);
+}
+
+test "renderCommand prints each positional's help, before its optional or variadic note" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+
+    var buf: [512]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+
+    const cmd = TestCommand{ .name = "cp", .args = &.{
+        .{ .name = "src", .help = "file to copy" },
+        .{ .name = "dst", .help = "where to put it", .optional = true },
+        .{ .name = "rest", .variadic = true },
+    } };
+    try TR.renderCommand(arena_state.allocator(), &w, cmd);
+    try testing.expect(std.mem.indexOf(u8, w.buffered(),
+        \\Args:
+        \\  <src>   file to copy
+        \\  <dst>   where to put it (optional)
+        \\  <rest>  (variadic)
+        \\
+    ) != null);
 }
