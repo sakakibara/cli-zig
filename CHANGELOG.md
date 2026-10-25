@@ -6,6 +6,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** requires Zig 0.17.0 (`minimum_zig_version`). On Zig 0.16,
+  stay on 0.3.1.
+
 ## [0.3.1] - 2026-10-24
 
 ### Fixed
