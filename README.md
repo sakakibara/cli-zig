@@ -77,6 +77,28 @@ const cli = b.dependency("cli", .{
 exe.root_module.addImport("cli", cli.module("cli"));
 ```
 
+## Compatibility
+
+- **Zig:** 0.17 (`minimum_zig_version = 0.17.0`).
+- **Zig 0.16:** 0.3.x, on the `zig-0.16` branch from 0.3.1. It takes
+  non-breaking fixes that port without redesign through 2027-04-25 (through
+  2027-01-25 at the earliest if a branch for a newer Zig opens sooner), and
+  security and data-loss fixes through 2027-10-25. A fix that does not
+  port is listed here. Either date moves earlier only with 90 days' notice
+  in this section.
+- **Pull requests:** against `main`; a fix that applies only to Zig 0.16,
+  against `zig-0.16`.
+- **Pins:**
+
+  | Using Zig | Pin |
+  | --- | --- |
+  | 0.16 | `v0.3.1` (`zig fetch --save git+https://github.com/sakakibara/cli-zig#v0.3.1`) |
+
+- **Versioning:** semantic versioning. Before 1.0, a minor release (0.y.0)
+  may break and a patch (0.y.z) never does. Breaking changes are marked
+  **Breaking** in the [CHANGELOG](CHANGELOG.md), and their commits are
+  marked with `!` in the subject.
+
 ## Quickstart
 
 ### Defining a typed command
