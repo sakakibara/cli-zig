@@ -170,15 +170,12 @@ dispatches:
 const commands = [_]App.Command{ greet_cmd, status_cmd };
 
 pub fn main(init: std.process.Init) !void {
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = gpa.deinit();
-
     var out_buf: [4096]u8 = undefined;
     var out_w = std.Io.Writer.fixed(&out_buf);
     var err_buf: [1024]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
-    const code = try App.run(gpa.allocator(), init.io, init.argv, &commands, &out_w, &err_w);
+    const code = try App.run(init.gpa, init.io, init.argv, &commands, &out_w, &err_w);
     std.process.exit(code);
 }
 ```

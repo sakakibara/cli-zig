@@ -45,16 +45,13 @@ const status_cmd = App.Command{
 const commands = [_]App.Command{ deploy_cmd, status_cmd };
 
 pub fn main(init: std.process.Init) !void {
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = gpa.deinit();
-
-    var out: std.Io.Writer.Allocating = .init(gpa.allocator());
+    var out: std.Io.Writer.Allocating = .init(init.gpa);
     defer out.deinit();
     var err_buf: [256]u8 = undefined;
     var err_w = std.Io.Writer.fixed(&err_buf);
 
     const argv: []const []const u8 = &.{ "app", "__schema" };
-    const code = try App.run(gpa.allocator(), init.io, argv, &commands, &out.writer, &err_w);
+    const code = try App.run(init.gpa, init.io, argv, &commands, &out.writer, &err_w);
 
     std.debug.print("$", .{});
     for (argv) |a| std.debug.print(" {s}", .{a});

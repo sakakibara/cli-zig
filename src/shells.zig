@@ -227,33 +227,33 @@ test "emit: bash wires __complete and registers the completion function" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const s = try emitToString(arena_state.allocator(), .bash, "myapp");
-    try testing.expect(std.mem.indexOf(u8, s, "myapp __complete") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "complete -F _myapp_complete myapp") != null);
+    try testing.expect(std.mem.find(u8, s, "myapp __complete") != null);
+    try testing.expect(std.mem.find(u8, s, "complete -F _myapp_complete myapp") != null);
 }
 
 test "emit: zsh wires __complete and registers via compdef" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const s = try emitToString(arena_state.allocator(), .zsh, "myapp");
-    try testing.expect(std.mem.indexOf(u8, s, "myapp __complete") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "compdef _myapp_complete myapp") != null);
+    try testing.expect(std.mem.find(u8, s, "myapp __complete") != null);
+    try testing.expect(std.mem.find(u8, s, "compdef _myapp_complete myapp") != null);
 }
 
 test "emit: fish wires __complete and registers via complete -c" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const s = try emitToString(arena_state.allocator(), .fish, "myapp");
-    try testing.expect(std.mem.indexOf(u8, s, "myapp __complete") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "complete -c myapp") != null);
+    try testing.expect(std.mem.find(u8, s, "myapp __complete") != null);
+    try testing.expect(std.mem.find(u8, s, "complete -c myapp") != null);
 }
 
 test "emit: powershell wires __complete and registers via Register-ArgumentCompleter" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const s = try emitToString(arena_state.allocator(), .powershell, "myapp");
-    try testing.expect(std.mem.indexOf(u8, s, "myapp __complete") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "Register-ArgumentCompleter") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "-CommandName myapp") != null);
+    try testing.expect(std.mem.find(u8, s, "myapp __complete") != null);
+    try testing.expect(std.mem.find(u8, s, "Register-ArgumentCompleter") != null);
+    try testing.expect(std.mem.find(u8, s, "-CommandName myapp") != null);
 }
 
 test "emit: the script is fully parameterized by the program name" {
@@ -263,10 +263,10 @@ test "emit: the script is fully parameterized by the program name" {
     inline for (.{ Shell.bash, Shell.zsh, Shell.fish, Shell.powershell }) |sh| {
         const a = try emitToString(alloc, sh, "myapp");
         const b = try emitToString(alloc, sh, "tool2");
-        try testing.expect(std.mem.indexOf(u8, a, "myapp") != null);
-        try testing.expect(std.mem.indexOf(u8, b, "tool2") != null);
-        try testing.expect(std.mem.indexOf(u8, a, "tool2") == null);
-        try testing.expect(std.mem.indexOf(u8, b, "myapp") == null);
+        try testing.expect(std.mem.find(u8, a, "myapp") != null);
+        try testing.expect(std.mem.find(u8, b, "tool2") != null);
+        try testing.expect(std.mem.find(u8, a, "tool2") == null);
+        try testing.expect(std.mem.find(u8, b, "myapp") == null);
     }
 }
 
@@ -288,79 +288,79 @@ test "emit: bash falls back to file completion on the files directive and strips
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const s = try emitToString(arena_state.allocator(), .bash, "myapp");
-    try testing.expect(std.mem.indexOf(u8, s, "\"files\"") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "compgen -f") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "%%$'\\t'") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "printf '%q'") != null);
+    try testing.expect(std.mem.find(u8, s, "\"files\"") != null);
+    try testing.expect(std.mem.find(u8, s, "compgen -f") != null);
+    try testing.expect(std.mem.find(u8, s, "%%$'\\t'") != null);
+    try testing.expect(std.mem.find(u8, s, "printf '%q'") != null);
 }
 
 test "emit: zsh dispatches on the directive for files, nospace, and default" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const s = try emitToString(arena_state.allocator(), .zsh, "myapp");
-    try testing.expect(std.mem.indexOf(u8, s, "== files") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "_files") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "== nospace") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "compadd -S ''") != null);
+    try testing.expect(std.mem.find(u8, s, "== files") != null);
+    try testing.expect(std.mem.find(u8, s, "_files") != null);
+    try testing.expect(std.mem.find(u8, s, "== nospace") != null);
+    try testing.expect(std.mem.find(u8, s, "compadd -S ''") != null);
 }
 
 test "emit: bash reassembles a COMP_WORDBREAKS-split --flag=value into one word" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const s = try emitToString(arena_state.allocator(), .bash, "myapp");
-    try testing.expect(std.mem.indexOf(u8, s, "\"${COMP_WORDS[i]}\" == \"=\"") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "__complete \"${words[@]}\"") != null);
+    try testing.expect(std.mem.find(u8, s, "\"${COMP_WORDS[i]}\" == \"=\"") != null);
+    try testing.expect(std.mem.find(u8, s, "__complete \"${words[@]}\"") != null);
 }
 
 test "emit: bash only merges a bare = into a flag-shaped preceding word, leaving a standalone = its own argument" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const s = try emitToString(arena_state.allocator(), .bash, "myapp");
-    try testing.expect(std.mem.indexOf(u8, s, "\"${words[${#words[@]} - 1]}\" == -*") != null);
+    try testing.expect(std.mem.find(u8, s, "\"${words[${#words[@]} - 1]}\" == -*") != null);
 }
 
 test "emit: zsh quotes the cursor-word window and candidate values to preserve empty elements" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const s = try emitToString(arena_state.allocator(), .zsh, "myapp");
-    try testing.expect(std.mem.indexOf(u8, s, "\"${(@)words[2,$CURRENT]}\"") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "compadd -S '' -d descs -- \"${values[@]}\"") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "compadd -d descs -- \"${values[@]}\"") != null);
+    try testing.expect(std.mem.find(u8, s, "\"${(@)words[2,$CURRENT]}\"") != null);
+    try testing.expect(std.mem.find(u8, s, "compadd -S '' -d descs -- \"${values[@]}\"") != null);
+    try testing.expect(std.mem.find(u8, s, "compadd -d descs -- \"${values[@]}\"") != null);
 }
 
 test "emit: fish captures the prior words and cursor word into variables before splicing them in" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const s = try emitToString(arena_state.allocator(), .fish, "myapp");
-    try testing.expect(std.mem.indexOf(u8, s, "set -l prior (commandline -opc)") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "set -l cur (commandline -ct)") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "$prior[2..-1] $cur") != null);
+    try testing.expect(std.mem.find(u8, s, "set -l prior (commandline -opc)") != null);
+    try testing.expect(std.mem.find(u8, s, "set -l cur (commandline -ct)") != null);
+    try testing.expect(std.mem.find(u8, s, "$prior[2..-1] $cur") != null);
 }
 
 test "emit: fish reads the directive instead of discarding it, and completes real paths on files" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const s = try emitToString(arena_state.allocator(), .fish, "myapp");
-    try testing.expect(std.mem.indexOf(u8, s, "tail -n +2") == null);
-    try testing.expect(std.mem.indexOf(u8, s, "set -l reply (") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "set -l directive $reply[1]") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "__fish_complete_path (commandline -ct)") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "for line in $reply[2..-1]") != null);
+    try testing.expect(std.mem.find(u8, s, "tail -n +2") == null);
+    try testing.expect(std.mem.find(u8, s, "set -l reply (") != null);
+    try testing.expect(std.mem.find(u8, s, "set -l directive $reply[1]") != null);
+    try testing.expect(std.mem.find(u8, s, "__fish_complete_path (commandline -ct)") != null);
+    try testing.expect(std.mem.find(u8, s, "for line in $reply[2..-1]") != null);
 }
 
 test "emit: powershell drops the cursor token from tokens before appending wordToComplete" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const s = try emitToString(arena_state.allocator(), .powershell, "myapp");
-    try testing.expect(std.mem.indexOf(u8, s, "$prior = $tokens") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "@(if ($tokens.Count -gt 1)") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "__complete @prior $wordToComplete") != null);
+    try testing.expect(std.mem.find(u8, s, "$prior = $tokens") != null);
+    try testing.expect(std.mem.find(u8, s, "@(if ($tokens.Count -gt 1)") != null);
+    try testing.expect(std.mem.find(u8, s, "__complete @prior $wordToComplete") != null);
 }
 
 test "emit: powershell splits value and description on the tab" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const s = try emitToString(arena_state.allocator(), .powershell, "myapp");
-    try testing.expect(std.mem.indexOf(u8, s, "-split \"`t\", 2") != null);
-    try testing.expect(std.mem.indexOf(u8, s, "'ParameterValue', $desc") != null);
+    try testing.expect(std.mem.find(u8, s, "-split \"`t\", 2") != null);
+    try testing.expect(std.mem.find(u8, s, "'ParameterValue', $desc") != null);
 }

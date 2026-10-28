@@ -311,7 +311,7 @@ pub fn App(comptime cfg: anytype) type {
         /// or when it returns null for a given error, `run` falls back to
         /// `error: <name>`. The allocator handed to it is a short-lived arena
         /// scoped to that one call, freed immediately after the message is
-        /// printed - a formatted message (`allocPrint`) never outlives the
+        /// printed - a formatted message (`alloc.print`) never outlives the
         /// print, and never needs the hook to free it itself.
         pub const describe_error: ?*const fn (alloc: std.mem.Allocator, err: anyerror) ?[]const u8 = if (@hasField(@TypeOf(cfg), "describeError"))
             cfg.describeError
@@ -507,7 +507,7 @@ pub fn App(comptime cfg: anytype) type {
                     if (isProvided(Spec, parsed, a)) {
                         inline for (c.with) |b| {
                             if (isProvided(Spec, parsed, b)) {
-                                return std.fmt.allocPrint(alloc, "--{s} cannot combine with --{s}{s}", .{
+                                return alloc.print("--{s} cannot combine with --{s}{s}", .{
                                     comptime spec.kebab(a),
                                     comptime spec.kebab(b),
                                     comptime parenthesized(c.why),
@@ -528,7 +528,7 @@ pub fn App(comptime cfg: anytype) type {
                             if (isProvided(Spec, parsed, name)) satisfied = true;
                         }
                         if (!satisfied) {
-                            return std.fmt.allocPrint(alloc, "--{s} requires one of {s}{s}", .{
+                            return alloc.print("--{s} requires one of {s}{s}", .{
                                 comptime spec.kebab(r.field),
                                 comptime spelledList(r.any_of),
                                 comptime parenthesized(r.why),
@@ -537,7 +537,7 @@ pub fn App(comptime cfg: anytype) type {
                     }
                     inline for (r.all_of) |name| {
                         if (!isProvided(Spec, parsed, name)) {
-                            return std.fmt.allocPrint(alloc, "--{s} requires --{s}{s}", .{
+                            return alloc.print("--{s} requires --{s}{s}", .{
                                 comptime spec.kebab(r.field),
                                 comptime spec.kebab(name),
                                 comptime parenthesized(r.why),
@@ -656,7 +656,7 @@ pub fn App(comptime cfg: anytype) type {
                         // into the format string.
                         const open = if (conflict.why.len > 0) " (" else "";
                         const close = if (conflict.why.len > 0) ")" else "";
-                        const msg = std.fmt.allocPrint(arena_state.allocator(), "--{s} and --{s} are mutually exclusive{s}{s}{s}", .{
+                        const msg = arena_state.allocator().print("--{s} and --{s} are mutually exclusive{s}{s}{s}", .{
                             conflict.a,
                             conflict.b,
                             open,
@@ -768,7 +768,7 @@ pub fn App(comptime cfg: anytype) type {
         /// when `cfg` provides that hook and it returns one, else
         /// `error: <name>`. `describeError` is called with a short-lived
         /// arena scoped to `alloc`, deinited right after the message is
-        /// printed, so a formatted (`allocPrint`) message never leaks
+        /// printed, so a message the hook formats with that arena never leaks
         /// regardless of what allocator the app's `run` was driven with.
         fn reportError(alloc: std.mem.Allocator, w: *std.Io.Writer, e: anyerror) void {
             if (describe_error) |f| {
@@ -915,7 +915,7 @@ pub fn App(comptime cfg: anytype) type {
             }
 
             if (argv.len >= 2 and std.mem.eql(u8, argv[1], "__schema")) {
-                Schema.emit(out, std.fs.path.basename(prog_name), commands) catch {};
+                Schema.emit(out, std.Io.Dir.path.basename(prog_name), commands) catch {};
                 return 0;
             }
 
@@ -928,7 +928,7 @@ pub fn App(comptime cfg: anytype) type {
                     err.print("{s}unknown shell: {s}\n", .{ message_prefix, argv[2] }) catch {};
                     return 2;
                 };
-                shells.emit(out, sh, std.fs.path.basename(prog_name)) catch {};
+                shells.emit(out, sh, std.Io.Dir.path.basename(prog_name)) catch {};
                 return 0;
             }
 
@@ -1095,7 +1095,7 @@ test "App.run suggests the nearest registered command name on a typo" {
 
         const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", typo }, &.{cmd}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 2), code);
-        const expected = try std.fmt.allocPrint(std.testing.allocator, "unknown command \"{s}\" (did you mean \"status\"?)\n", .{typo});
+        const expected = try std.testing.allocator.print("unknown command \"{s}\" (did you mean \"status\"?)\n", .{typo});
         defer std.testing.allocator.free(expected);
         try std.testing.expectEqualStrings(expected, err_w.buffered());
     }
@@ -1156,9 +1156,9 @@ test "App.run renders top-level help grouped by command when no command is given
     const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{"app"}, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     const out = out_w.buffered();
-    try std.testing.expect(std.mem.indexOf(u8, out, "extra:") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "hello") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "says hi") != null);
+    try std.testing.expect(std.mem.find(u8, out, "extra:") != null);
+    try std.testing.expect(std.mem.find(u8, out, "hello") != null);
+    try std.testing.expect(std.mem.find(u8, out, "says hi") != null);
 }
 
 test "App.run shows top-level help when --help or -h is the first argument" {
@@ -1185,7 +1185,7 @@ test "App.run shows top-level help when --help or -h is the first argument" {
 
         const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", flag_arg }, &.{cmd}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
-        try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "hello") != null);
+        try std.testing.expect(std.mem.find(u8, out_w.buffered(), "hello") != null);
     }
 }
 
@@ -1312,13 +1312,13 @@ test "App.run carries a positional's help text into its command's --help and the
 
     const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "get", "--help" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
-    try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "\nArgs:\n  <eid>  encoded id\n") != null);
+    try std.testing.expect(std.mem.find(u8, out_w.buffered(), "\nArgs:\n  <eid>  encoded id\n") != null);
 
     var schema_buf: [1024]u8 = undefined;
     var schema_w = std.Io.Writer.fixed(&schema_buf);
     const schema_code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "__schema" }, &.{cmd}, &schema_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), schema_code);
-    try std.testing.expect(std.mem.indexOf(u8, schema_w.buffered(), "{\"name\":\"eid\",\"help\":\"encoded id\",") != null);
+    try std.testing.expect(std.mem.find(u8, schema_w.buffered(), "{\"name\":\"eid\",\"help\":\"encoded id\",") != null);
 }
 
 test "command() trampoline reports a bad parse to ctx.err and returns code 2" {
@@ -1350,7 +1350,7 @@ test "command() trampoline reports a bad parse to ctx.err and returns code 2" {
     const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "greet" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 2), code);
     try std.testing.expect(err_w.buffered().len != 0);
-    try std.testing.expect(std.mem.indexOf(u8, err_w.buffered(), "name") != null);
+    try std.testing.expect(std.mem.find(u8, err_w.buffered(), "name") != null);
 }
 
 const FilesSpec = struct {
@@ -1516,7 +1516,7 @@ test "an exclusive group carries its reason into the usage error and the schema"
     var err_w = std.Io.Writer.fixed(&err_buf);
     const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "ex", "--a", "x", "--b", "y" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 2), code);
-    try std.testing.expect(std.mem.indexOf(
+    try std.testing.expect(std.mem.find(
         u8,
         err_w.buffered(),
         "--a and --b are mutually exclusive (each names a different backend)",
@@ -1544,7 +1544,7 @@ test "About.conflicts rejects a cross-set pair and keeps each side combinable" {
         var err_w = std.Io.Writer.fixed(&err_buf);
         const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "add", "--recursive", "--own", "k" }, &.{cmd}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 2), code);
-        try std.testing.expect(std.mem.indexOf(u8, err_w.buffered(), "--recursive cannot combine with --own (a key path names one file)") != null);
+        try std.testing.expect(std.mem.find(u8, err_w.buffered(), "--recursive cannot combine with --own (a key path names one file)") != null);
     }
 
     // Both sides of the conflict still combine among themselves: this is
@@ -1576,7 +1576,7 @@ test "About.requires demands a companion, and is satisfied by any one of them" {
         var err_w = std.Io.Writer.fixed(&err_buf);
         const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "add", "--gate", "os=linux" }, &.{cmd}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 2), code);
-        try std.testing.expect(std.mem.indexOf(
+        try std.testing.expect(std.mem.find(
             u8,
             err_w.buffered(),
             "--gate requires one of --own, --own-absent (a gate attaches to an ownership declaration)",
@@ -1612,8 +1612,8 @@ test "a conflict is reported ahead of a requirement broken by the same argv" {
     var err_w = std.Io.Writer.fixed(&err_buf);
     const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "add", "--recursive", "--gate", "os=linux" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 2), code);
-    try std.testing.expect(std.mem.indexOf(u8, err_w.buffered(), "cannot combine with") != null);
-    try std.testing.expect(std.mem.indexOf(u8, err_w.buffered(), "requires one of") == null);
+    try std.testing.expect(std.mem.find(u8, err_w.buffered(), "cannot combine with") != null);
+    try std.testing.expect(std.mem.find(u8, err_w.buffered(), "requires one of") == null);
 }
 
 test "command() derives a Constraint per declared relation, argv-spelled" {
@@ -1671,7 +1671,7 @@ test "command() trampoline enforces About.exclusive and never calls run_fn on co
         const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "ex", "--a", "x", "--b", "y" }, &.{cmd}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 2), code);
         try std.testing.expect(!S.called);
-        try std.testing.expect(std.mem.indexOf(u8, err_w.buffered(), "--a and --b are mutually exclusive") != null);
+        try std.testing.expect(std.mem.find(u8, err_w.buffered(), "--a and --b are mutually exclusive") != null);
     }
 
     {
@@ -1834,7 +1834,7 @@ test "run's describeError hook can format dynamic content with the allocator it 
         .loadContext = testNoopLoadContext,
         .describeError = struct {
             fn f(alloc: std.mem.Allocator, e: anyerror) ?[]const u8 {
-                return std.fmt.allocPrint(alloc, "internal error: {s}", .{@errorName(e)}) catch null;
+                return alloc.print("internal error: {s}", .{@errorName(e)}) catch null;
             }
         }.f,
     });
@@ -1856,7 +1856,7 @@ test "run's describeError hook can format dynamic content with the allocator it 
 
     // std.testing.allocator fails this test on any leak; the arena
     // reportError scopes around the describeError call must free the
-    // allocPrint'd message after printing it.
+    // formatted message after printing it.
     const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "boom" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 1), code);
     try std.testing.expectEqualStrings("internal error: Sprocket\n", err_w.buffered());
@@ -2059,7 +2059,7 @@ test "command() trampoline reports a bad typed-option value and never calls run_
     const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "greet", "-p", "xyz", "world" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 2), code);
     try std.testing.expect(err_w.buffered().len != 0);
-    try std.testing.expect(std.mem.indexOf(u8, err_w.buffered(), "requires an integer") != null);
+    try std.testing.expect(std.mem.find(u8, err_w.buffered(), "requires an integer") != null);
     try std.testing.expect(!S.called);
 }
 
@@ -2381,9 +2381,9 @@ test "<cmd> --help shows the command's usage, a flag's help text, and its value_
     const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "serve", "--help" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     const out = out_w.buffered();
-    try std.testing.expect(std.mem.indexOf(u8, out, "app serve [-p PORT] <name>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "listen port") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "PORT") != null);
+    try std.testing.expect(std.mem.find(u8, out, "app serve [-p PORT] <name>") != null);
+    try std.testing.expect(std.mem.find(u8, out, "listen port") != null);
+    try std.testing.expect(std.mem.find(u8, out, "PORT") != null);
 }
 
 test "help <cmd> renders the same per-command help as <cmd> --help" {
@@ -2654,7 +2654,7 @@ test "hasHelpFlag stops at -- so --help after it passes through, but --help befo
         const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "files", "--help" }, &.{cmd}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expect(!S.called);
-        try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "files") != null);
+        try std.testing.expect(std.mem.find(u8, out_w.buffered(), "files") != null);
     }
 }
 
@@ -2683,7 +2683,7 @@ test "run renders a run_fn's own error to ctx.err and returns exit code 1" {
     const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "boom" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 1), code);
     try std.testing.expect(err_w.buffered().len != 0);
-    try std.testing.expect(std.mem.indexOf(u8, err_w.buffered(), "Boom") != null);
+    try std.testing.expect(std.mem.find(u8, err_w.buffered(), "Boom") != null);
 }
 
 const RegionSpec = struct {
@@ -2785,9 +2785,9 @@ test "command help synthesizes a usage line from the Spec when About.usage is em
     const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "greet", "--help" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     const out = out_w.buffered();
-    try std.testing.expect(std.mem.indexOf(u8, out, "greet") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "[--flags]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "<name>") != null);
+    try std.testing.expect(std.mem.find(u8, out, "greet") != null);
+    try std.testing.expect(std.mem.find(u8, out, "[--flags]") != null);
+    try std.testing.expect(std.mem.find(u8, out, "<name>") != null);
 }
 
 const EnvSpec = struct {
@@ -2876,7 +2876,7 @@ test "run forwards cfg.groupHeading and cfg.renderHelpFooter to renderTop on the
     const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{"app"}, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     const out = out_w.buffered();
-    try std.testing.expect(std.mem.indexOf(u8, out, "System tools:") != null);
+    try std.testing.expect(std.mem.find(u8, out, "System tools:") != null);
     try std.testing.expect(std.mem.endsWith(u8, out, "see docs\n"));
 }
 
@@ -2903,7 +2903,7 @@ test "run forwards cfg.groupHeading and cfg.renderHelpFooter to renderTop on the
     const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "help" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     const out = out_w.buffered();
-    try std.testing.expect(std.mem.indexOf(u8, out, "System tools:") != null);
+    try std.testing.expect(std.mem.find(u8, out, "System tools:") != null);
     try std.testing.expect(std.mem.endsWith(u8, out, "see docs\n"));
 }
 
@@ -2928,8 +2928,8 @@ test "run's top-level help keeps the built-in heading and footer when cfg has ne
     const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{"app"}, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     const out = out_w.buffered();
-    try std.testing.expect(std.mem.indexOf(u8, out, "\nsystem:\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "<command> --help") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\nsystem:\n") != null);
+    try std.testing.expect(std.mem.find(u8, out, "<command> --help") != null);
 }
 
 test "run intercepts __complete and replies with matching command names" {
@@ -2992,8 +2992,8 @@ test "run intercepts __complete and replies with a command's flag names after --
     const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "__complete", "greet", "--" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     const out = out_w.buffered();
-    try std.testing.expect(std.mem.indexOf(u8, out, "--verbose") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "--port") != null);
+    try std.testing.expect(std.mem.find(u8, out, "--verbose") != null);
+    try std.testing.expect(std.mem.find(u8, out, "--port") != null);
 }
 
 test "run's __complete interception survives a failing loadContext and still replies with candidates" {
@@ -3024,7 +3024,7 @@ test "run's __complete interception survives a failing loadContext and still rep
     const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "__complete", "deploy", "--env", "st" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     try std.testing.expectEqualStrings("", err_w.buffered());
-    try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "staging") != null);
+    try std.testing.expect(std.mem.find(u8, out_w.buffered(), "staging") != null);
 }
 
 test "run's __complete interception never reaches unknown-command handling, even with argv.len == 2" {
@@ -3052,7 +3052,7 @@ test "run's __complete interception never reaches unknown-command handling, even
     const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "__complete" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     try std.testing.expectEqualStrings("", err_w.buffered());
-    try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "greet") != null);
+    try std.testing.expect(std.mem.find(u8, out_w.buffered(), "greet") != null);
 }
 
 test "run intercepts completion <shell> and writes the shell's script to out" {
@@ -3070,8 +3070,8 @@ test "run intercepts completion <shell> and writes the shell's script to out" {
     const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "completion", "bash" }, &.{}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     try std.testing.expectEqualStrings("", err_w.buffered());
-    try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "app __complete") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "complete -F _app_complete app") != null);
+    try std.testing.expect(std.mem.find(u8, out_w.buffered(), "app __complete") != null);
+    try std.testing.expect(std.mem.find(u8, out_w.buffered(), "complete -F _app_complete app") != null);
 }
 
 test "run's completion interception rejects an unknown shell with a code-2 diagnostic" {
@@ -3137,10 +3137,10 @@ test "run intercepts __schema and writes the command table as a versioned JSON e
     try std.testing.expectEqualStrings("", err_w.buffered());
     const out = out_w.buffered();
     try std.testing.expect(std.mem.startsWith(u8, out, "{"));
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"version\":2") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"program\":\"app\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"commands\":[") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"name\":\"greet\"") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\"version\":2") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\"program\":\"app\"") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\"commands\":[") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\"name\":\"greet\"") != null);
 }
 
 const DeploySpec = struct {
@@ -3171,7 +3171,7 @@ test "__schema emits a command()-derived flag's .choices completer" {
     const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "__schema" }, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
     const out = out_w.buffered();
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"complete\":{\"kind\":\"choices\",\"values\":[\"dev\",\"staging\",\"prod\"]}") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\"complete\":{\"kind\":\"choices\",\"values\":[\"dev\",\"staging\",\"prod\"]}") != null);
 }
 
 test "__schema is never shown in top-level help" {
@@ -3198,7 +3198,7 @@ test "__schema is never shown in top-level help" {
 
     const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{"app"}, &.{cmd}, &out_w, &err_w);
     try std.testing.expectEqual(@as(u8, 0), code);
-    try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "__schema") == null);
+    try std.testing.expect(std.mem.find(u8, out_w.buffered(), "__schema") == null);
 }
 
 test "help parent renders its own help and lists its subcommands with their summaries" {
@@ -3280,7 +3280,7 @@ test "help parent sub renders the subcommand's own help" {
     try std.testing.expectEqual(@as(u8, 0), code);
     const out = out_w.buffered();
     try std.testing.expect(std.mem.startsWith(u8, out, "Usage: app grp sub [-p PORT] <name>\n"));
-    try std.testing.expect(std.mem.indexOf(u8, out, "listen port") != null);
+    try std.testing.expect(std.mem.find(u8, out, "listen port") != null);
 }
 
 test "help parent bogus reports an unknown subcommand with exit code 2" {
@@ -3355,8 +3355,8 @@ test "run calls cfg.renderTopHelp instead of the built-in top-level renderer, on
         const code = try TestApp.run(std.testing.allocator, std.testing.io, argv, &.{cmd}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqualStrings("CUSTOM TOP HELP\n", out_w.buffered());
-        try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "Usage:") == null);
-        try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "general:") == null);
+        try std.testing.expect(std.mem.find(u8, out_w.buffered(), "Usage:") == null);
+        try std.testing.expect(std.mem.find(u8, out_w.buffered(), "general:") == null);
     }
 }
 
@@ -3392,8 +3392,8 @@ test "run calls cfg.renderCommandHelp instead of the built-in per-command render
         const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "serve", "--help" }, &.{cmd}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqualStrings("CUSTOM COMMAND HELP for serve\n", out_w.buffered());
-        try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "Usage:") == null);
-        try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "PORT") == null);
+        try std.testing.expect(std.mem.find(u8, out_w.buffered(), "Usage:") == null);
+        try std.testing.expect(std.mem.find(u8, out_w.buffered(), "PORT") == null);
     }
 
     {
@@ -3405,7 +3405,7 @@ test "run calls cfg.renderCommandHelp instead of the built-in per-command render
         const code = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "help", "serve" }, &.{cmd}, &out_w, &err_w);
         try std.testing.expectEqual(@as(u8, 0), code);
         try std.testing.expectEqualStrings("CUSTOM COMMAND HELP for serve\n", out_w.buffered());
-        try std.testing.expect(std.mem.indexOf(u8, out_w.buffered(), "Usage:") == null);
+        try std.testing.expect(std.mem.find(u8, out_w.buffered(), "Usage:") == null);
     }
 }
 
@@ -3637,7 +3637,7 @@ test "help resolves a 3-level subcommand tree to the deepest matching command" {
         try std.testing.expectEqual(@as(u8, 0), code);
         const out = out_w.buffered();
         try std.testing.expect(std.mem.startsWith(u8, out, "Usage: app a b c [--cflag]\n"));
-        try std.testing.expect(std.mem.indexOf(u8, out, "c's own flag") != null);
+        try std.testing.expect(std.mem.find(u8, out, "c's own flag") != null);
     }
 
     // help a b renders the exact same help as a b --help.
@@ -3655,7 +3655,7 @@ test "help resolves a 3-level subcommand tree to the deepest matching command" {
         _ = try TestApp.run(std.testing.allocator, std.testing.io, &.{ "app", "help", "a", "b" }, &.{a}, &out_w_b, &err_w_b);
 
         try std.testing.expectEqualStrings(out_w_a.buffered(), out_w_b.buffered());
-        try std.testing.expect(std.mem.indexOf(u8, out_w_a.buffered(), "b's own flag") != null);
+        try std.testing.expect(std.mem.find(u8, out_w_a.buffered(), "b's own flag") != null);
     }
 
     // a b c --help renders c's own help via the composed --help path.
@@ -3946,7 +3946,7 @@ test "Fix 4: no cli-zig-internal leak across help/version/__complete/__schema/co
         .loadContext = testNoopLoadContext,
         .describeError = struct {
             fn f(alloc: std.mem.Allocator, e: anyerror) ?[]const u8 {
-                return std.fmt.allocPrint(alloc, "internal error: {s}", .{@errorName(e)}) catch null;
+                return alloc.print("internal error: {s}", .{@errorName(e)}) catch null;
             }
         }.f,
     });

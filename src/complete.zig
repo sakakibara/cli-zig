@@ -208,7 +208,7 @@ pub fn Completion(comptime Command: type, comptime Flag: type, comptime Arg: typ
             // A self-contained `--flag=value` word completes the flag's value
             // against the part after `=`, not the flag name itself.
             if (cur.len > 1 and cur[0] == '-') {
-                if (std.mem.indexOfScalar(u8, cur, '=')) |eq| {
+                if (std.mem.findScalar(u8, cur, '=')) |eq| {
                     const name = cur[0..eq];
                     const val = cur[eq + 1 ..];
                     if (pendingValueFlag(name, cmd.flags)) |f| {
@@ -259,7 +259,7 @@ pub fn Completion(comptime Command: type, comptime Flag: type, comptime Arg: typ
         /// `--long`/`-s` awaiting a value (not the self-contained
         /// `--long=v`). Null otherwise.
         fn pendingValueFlag(tok: []const u8, flags: []const Flag) ?Flag {
-            if (std.mem.indexOfScalar(u8, tok, '=') != null) return null;
+            if (std.mem.findScalar(u8, tok, '=') != null) return null;
             for (flags) |f| {
                 if (!f.takes_value) continue;
                 if (std.mem.startsWith(u8, tok, "--") and std.mem.eql(u8, tok[2..], f.long)) return f;
@@ -290,7 +290,7 @@ pub fn Completion(comptime Command: type, comptime Flag: type, comptime Arg: typ
             var out: std.ArrayList([]const u8) = .empty;
             for (flags) |f| {
                 if (flagPresent(prior, f)) continue;
-                try out.append(alloc, try std.fmt.allocPrint(alloc, "--{s}", .{f.long}));
+                try out.append(alloc, try alloc.print("--{s}", .{f.long}));
             }
             return filterMatches(alloc, try plain(alloc, try out.toOwnedSlice(alloc)), cur);
         }
@@ -301,7 +301,7 @@ pub fn Completion(comptime Command: type, comptime Flag: type, comptime Arg: typ
         fn flagPresent(prior: []const []const u8, f: Flag) bool {
             for (prior) |tok| {
                 if (std.mem.startsWith(u8, tok, "--")) {
-                    const name = if (std.mem.indexOfScalar(u8, tok, '=')) |e| tok[2..e] else tok[2..];
+                    const name = if (std.mem.findScalar(u8, tok, '=')) |e| tok[2..e] else tok[2..];
                     if (std.mem.eql(u8, name, f.long)) return true;
                 } else if (f.short) |s| {
                     if (tok.len == 2 and tok[0] == '-' and tok[1] == s) return true;
@@ -319,7 +319,7 @@ pub fn Completion(comptime Command: type, comptime Flag: type, comptime Arg: typ
             while (i < prior.len) : (i += 1) {
                 const tok = prior[i];
                 if (tok.len > 0 and tok[0] == '-') {
-                    if (std.mem.indexOfScalar(u8, tok, '=') != null) continue; // --k=v is self-contained
+                    if (std.mem.findScalar(u8, tok, '=') != null) continue; // --k=v is self-contained
                     if (flagTakesValue(flags, tok)) i += 1; // skip the value token
                     continue;
                 }
@@ -336,7 +336,7 @@ pub fn Completion(comptime Command: type, comptime Flag: type, comptime Arg: typ
             while (i < prior.len) : (i += 1) {
                 const tok = prior[i];
                 if (tok.len > 0 and tok[0] == '-') {
-                    if (std.mem.indexOfScalar(u8, tok, '=') != null) continue;
+                    if (std.mem.findScalar(u8, tok, '=') != null) continue;
                     if (flagTakesValue(flags, tok)) i += 1;
                     continue;
                 }
@@ -399,7 +399,7 @@ fn testResolve(alloc: std.mem.Allocator, key: []const u8, prev: ?[]const u8, cur
     if (!std.mem.eql(u8, key, "thing")) return empty();
     if (cur.len > 0 and cur[0] == '/') return .{ .directive = .files, .candidates = &.{} };
     var out: std.ArrayList(Candidate) = .empty;
-    try out.append(alloc, .{ .value = try std.fmt.allocPrint(alloc, "foo-{s}", .{cur}), .description = "a thing" });
+    try out.append(alloc, .{ .value = try alloc.print("foo-{s}", .{cur}), .description = "a thing" });
     try out.append(alloc, .{ .value = "bar" });
     return .{ .directive = .default, .candidates = try out.toOwnedSlice(alloc) };
 }
@@ -688,8 +688,8 @@ test "reply: emits the directive line, then value<TAB>description or bare value 
     try TC.reply(arena, &table, &.{ "use", "" }, testResolve, &ctx, &out.writer);
     const got = out.written();
     try testing.expect(std.mem.startsWith(u8, got, "default\n"));
-    try testing.expect(std.mem.indexOf(u8, got, "foo-\ta thing\n") != null);
-    try testing.expect(std.mem.indexOf(u8, got, "bar\n") != null);
+    try testing.expect(std.mem.find(u8, got, "foo-\ta thing\n") != null);
+    try testing.expect(std.mem.find(u8, got, "bar\n") != null);
 }
 
 fn dirtyResolve(alloc: std.mem.Allocator, _: []const u8, _: ?[]const u8, _: []const u8, _: *TestCtx) anyerror!Result {
@@ -715,7 +715,7 @@ test "reply: a candidate whose value or description carries a tab/newline is san
 
     const line_count = std.mem.count(u8, got, "\n");
     try testing.expectEqual(@as(usize, 2), line_count); // directive line + one candidate line
-    try testing.expect(std.mem.indexOf(u8, got, "a b\tx y\n") != null);
+    try testing.expect(std.mem.find(u8, got, "a b\tx y\n") != null);
 }
 
 test "reply: a resolver error still emits a directive line and no candidate lines" {

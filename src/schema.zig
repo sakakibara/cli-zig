@@ -294,11 +294,11 @@ test "emit writes a JSON envelope containing a command's name and a flag's long 
     const got = w.buffered();
 
     try testing.expect(std.mem.startsWith(u8, got, "{"));
-    try testing.expect(std.mem.indexOf(u8, got, "\"version\":2") != null);
-    try testing.expect(std.mem.indexOf(u8, got, "\"program\":\"app\"") != null);
-    try testing.expect(std.mem.indexOf(u8, got, "\"commands\":[") != null);
-    try testing.expect(std.mem.indexOf(u8, got, "\"name\":\"greet\"") != null);
-    try testing.expect(std.mem.indexOf(u8, got, "\"long\":\"verbose\"") != null);
+    try testing.expect(std.mem.find(u8, got, "\"version\":2") != null);
+    try testing.expect(std.mem.find(u8, got, "\"program\":\"app\"") != null);
+    try testing.expect(std.mem.find(u8, got, "\"commands\":[") != null);
+    try testing.expect(std.mem.find(u8, got, "\"name\":\"greet\"") != null);
+    try testing.expect(std.mem.find(u8, got, "\"long\":\"verbose\"") != null);
 }
 
 test "emit serializes a .choices completer as {\"kind\":\"choices\",\"values\":[...]}" {
@@ -313,7 +313,7 @@ test "emit serializes a .choices completer as {\"kind\":\"choices\",\"values\":[
     try TE.emit(&w, "app", &table);
     const got = w.buffered();
 
-    try testing.expect(std.mem.indexOf(u8, got, "\"complete\":{\"kind\":\"choices\",\"values\":[\"dev\",\"prod\"]}") != null);
+    try testing.expect(std.mem.find(u8, got, "\"complete\":{\"kind\":\"choices\",\"values\":[\"dev\",\"prod\"]}") != null);
 }
 
 test "emit escapes a double quote in a summary" {
@@ -328,7 +328,7 @@ test "emit escapes a double quote in a summary" {
     try TE.emit(&w, "app", &table);
     const got = w.buffered();
 
-    try testing.expect(std.mem.indexOf(u8, got, "\"summary\":\"he said \\\"hi\\\"\"") != null);
+    try testing.expect(std.mem.find(u8, got, "\"summary\":\"he said \\\"hi\\\"\"") != null);
 }
 
 test "emit writes null for a non-ASCII-printable short flag and stays valid JSON" {
@@ -343,7 +343,7 @@ test "emit writes null for a non-ASCII-printable short flag and stays valid JSON
     try TE.emit(&w, "app", &table);
     const got = w.buffered();
 
-    try testing.expect(std.mem.indexOf(u8, got, "\"short\":null") != null);
+    try testing.expect(std.mem.find(u8, got, "\"short\":null") != null);
 
     var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, got, .{});
     defer parsed.deinit();
@@ -426,5 +426,5 @@ test "emit carries a positional's help text" {
     const table = [_]TestCommand{.{ .name = "get", .args = &.{.{ .name = "eid", .help = "encoded id" }} }};
 
     try TE.emit(&w, "app", &table);
-    try testing.expect(std.mem.indexOf(u8, w.buffered(), "{\"name\":\"eid\",\"help\":\"encoded id\",") != null);
+    try testing.expect(std.mem.find(u8, w.buffered(), "{\"name\":\"eid\",\"help\":\"encoded id\",") != null);
 }

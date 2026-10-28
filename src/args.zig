@@ -90,7 +90,7 @@ fn fallback(m: spec.Meta, field_name: []const u8, source: Source) ?[]const u8 {
 /// failure while formatting degrades to an empty message rather than masking
 /// the usage error.
 fn usageError(alloc: std.mem.Allocator, diag: ?*Diagnostic, comptime fmt: []const u8, args: anytype) parse.Error {
-    if (diag) |d| d.message = std.fmt.allocPrint(alloc, fmt, args) catch "";
+    if (diag) |d| d.message = alloc.print(fmt, args) catch "";
     return error.UsageError;
 }
 
@@ -503,7 +503,7 @@ test "parseInto: with a Rest field, a required positional starved of a pre-- tok
     const bad = parseInto(Spec, a, &.{ "--", "a" }, src, &diag);
     defer a.free(diag.message);
     try std.testing.expectError(error.UsageError, bad);
-    try std.testing.expect(std.mem.indexOf(u8, diag.message, "missing required argument") != null);
+    try std.testing.expect(std.mem.find(u8, diag.message, "missing required argument") != null);
 }
 
 test "parseInto: with a Rest field, a starved optional positional resolves to null and the variadic takes every post-- token; order-independent" {

@@ -52,17 +52,14 @@ fn printArgv(argv: []const []const u8) void {
 }
 
 pub fn main(init: std.process.Init) !void {
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = gpa.deinit();
-
     {
-        var out: std.Io.Writer.Allocating = .init(gpa.allocator());
+        var out: std.Io.Writer.Allocating = .init(init.gpa);
         defer out.deinit();
         var err_buf: [256]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
 
         const argv = &.{ "app", "completion", "bash" };
-        const code = try App.run(gpa.allocator(), init.io, argv, &commands, &out.writer, &err_w);
+        const code = try App.run(init.gpa, init.io, argv, &commands, &out.writer, &err_w);
 
         printArgv(argv);
         std.debug.print("{s}\nexit: {d}\n\n", .{ out.written(), code });
@@ -75,7 +72,7 @@ pub fn main(init: std.process.Init) !void {
         var err_w = std.Io.Writer.fixed(&err_buf);
 
         const argv = &.{ "app", "__complete", "deploy", "--env", "st" };
-        const code = try App.run(gpa.allocator(), init.io, argv, &commands, &out_w, &err_w);
+        const code = try App.run(init.gpa, init.io, argv, &commands, &out_w, &err_w);
 
         printArgv(argv);
         std.debug.print("{s}exit: {d}\n\n", .{ out_w.buffered(), code });

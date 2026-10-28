@@ -63,7 +63,7 @@ pub const Parser = struct {
     dashdash: ?usize = null,
     /// Every short char declared via `registerShort`, consulted to
     /// decompose a clustered token. Backed by `cluster_arena`.
-    short_registry: std.AutoHashMapUnmanaged(u8, ShortRole) = .{},
+    short_registry: std.AutoHashMapUnmanaged(u8, ShortRole) = .empty,
     /// Backs `short_registry` and every `Token.cluster` slice; freed in one
     /// shot by `deinit`.
     cluster_arena: std.heap.ArenaAllocator,
@@ -104,7 +104,7 @@ pub const Parser = struct {
     /// Sets `self.message`, freeing any prior message first so repeated
     /// error paths on the same Parser don't leak.
     fn setMessage(self: *Parser, comptime fmt: []const u8, args: anytype) error{OutOfMemory}!void {
-        const new_message = try std.fmt.allocPrint(self.alloc, fmt, args);
+        const new_message = try self.alloc.print(fmt, args);
         if (self.message.len != 0) self.alloc.free(self.message);
         self.message = new_message;
     }
@@ -142,7 +142,7 @@ pub const Parser = struct {
     /// the next-token form (`-o =x`). An unregistered char is rejected by
     /// name.
     fn classifyCluster(self: *Parser, raw: []const u8) Error![]ClusterSlot {
-        var slots: std.ArrayListUnmanaged(ClusterSlot) = .empty;
+        var slots: std.ArrayList(ClusterSlot) = .empty;
         var i: usize = 1;
         while (i < raw.len) : (i += 1) {
             const c = raw[i];

@@ -132,7 +132,7 @@ pub fn Renderer(comptime Command: type, comptime Flag: type, comptime Arg: type,
         }
 
         fn argLabel(alloc: std.mem.Allocator, a: Arg) ![]const u8 {
-            return std.fmt.allocPrint(alloc, "<{s}>", .{a.name});
+            return alloc.print("<{s}>", .{a.name});
         }
 
         /// Synopsis, then a Flags table (from `cmd.flags`) and an Args table
@@ -256,9 +256,9 @@ test "renderTop points the user at completion <shell> alongside <command> --help
     try TR.renderTop(&w, "app", &commands, null, null);
     const got = w.buffered();
 
-    try testing.expect(std.mem.indexOf(u8, got, "\ngeneral:\n") != null);
-    try testing.expect(std.mem.indexOf(u8, got, "app <command> --help") != null);
-    try testing.expect(std.mem.indexOf(u8, got, "app completion <shell>") != null);
+    try testing.expect(std.mem.find(u8, got, "\ngeneral:\n") != null);
+    try testing.expect(std.mem.find(u8, got, "app <command> --help") != null);
+    try testing.expect(std.mem.find(u8, got, "app completion <shell>") != null);
 }
 
 fn testGroupHeading(g: TestGroup) []const u8 {
@@ -276,8 +276,8 @@ test "renderTop uses a groupHeading hook's text instead of the bare enum field n
     try TR.renderTop(&w, "app", &commands, &testGroupHeading, null);
     const got = w.buffered();
 
-    try testing.expect(std.mem.indexOf(u8, got, "System tools:") != null);
-    try testing.expect(std.mem.indexOf(u8, got, "\nsystem:\n") == null);
+    try testing.expect(std.mem.find(u8, got, "System tools:") != null);
+    try testing.expect(std.mem.find(u8, got, "\nsystem:\n") == null);
 }
 
 fn testHelpFooter(w: *std.Io.Writer, prog_name: []const u8) anyerror!void {
@@ -294,8 +294,8 @@ test "renderTop calls a renderHelpFooter hook instead of the built-in footer" {
     const got = w.buffered();
 
     try testing.expect(std.mem.endsWith(u8, got, "see docs\n"));
-    try testing.expect(std.mem.indexOf(u8, got, "<command> --help") == null);
-    try testing.expect(std.mem.indexOf(u8, got, "completion <shell>") == null);
+    try testing.expect(std.mem.find(u8, got, "<command> --help") == null);
+    try testing.expect(std.mem.find(u8, got, "completion <shell>") == null);
 }
 
 test "renderCommand lists a command's subcommands under a Commands section, with a synthesized usage ending in <command>" {
@@ -316,9 +316,9 @@ test "renderCommand lists a command's subcommands under a Commands section, with
     const got = w.buffered();
 
     try testing.expect(std.mem.startsWith(u8, got, "Usage: remote <command>\n"));
-    try testing.expect(std.mem.indexOf(u8, got, "\nCommands:\n") != null);
-    try testing.expect(std.mem.indexOf(u8, got, "  add   add a remote\n") != null);
-    try testing.expect(std.mem.indexOf(u8, got, "  list  list remotes\n") != null);
+    try testing.expect(std.mem.find(u8, got, "\nCommands:\n") != null);
+    try testing.expect(std.mem.find(u8, got, "  add   add a remote\n") != null);
+    try testing.expect(std.mem.find(u8, got, "  list  list remotes\n") != null);
 }
 
 test "renderCommand states every relation under Constraints, with the author's reason" {
@@ -352,7 +352,7 @@ test "renderCommand states every relation under Constraints, with the author's r
     try TR.renderCommand(arena_state.allocator(), &w, cmd);
     const got = w.buffered();
 
-    try testing.expect(std.mem.indexOf(u8, got,
+    try testing.expect(std.mem.find(u8, got,
         \\
         \\Constraints:
         \\  --recursive cannot combine with --own, --own-absent (a key path names one file)
@@ -370,7 +370,7 @@ test "renderCommand omits the Constraints section for a command that declares no
     var w = std.Io.Writer.fixed(&buf);
 
     try TR.renderCommand(arena_state.allocator(), &w, TestCommand{ .name = "plain" });
-    try testing.expect(std.mem.indexOf(u8, w.buffered(), "Constraints:") == null);
+    try testing.expect(std.mem.find(u8, w.buffered(), "Constraints:") == null);
 }
 
 test "renderCommand omits the Commands section for a leaf command with no subcommands" {
@@ -384,8 +384,8 @@ test "renderCommand omits the Commands section for a leaf command with no subcom
     try TR.renderCommand(arena_state.allocator(), &w, cmd);
     const got = w.buffered();
 
-    try testing.expect(std.mem.indexOf(u8, got, "Commands:") == null);
-    try testing.expect(std.mem.indexOf(u8, got, "<command>") == null);
+    try testing.expect(std.mem.find(u8, got, "Commands:") == null);
+    try testing.expect(std.mem.find(u8, got, "<command>") == null);
 }
 
 test "renderCommand prints each positional's help, before its optional or variadic note" {
@@ -401,7 +401,7 @@ test "renderCommand prints each positional's help, before its optional or variad
         .{ .name = "rest", .variadic = true },
     } };
     try TR.renderCommand(arena_state.allocator(), &w, cmd);
-    try testing.expect(std.mem.indexOf(u8, w.buffered(),
+    try testing.expect(std.mem.find(u8, w.buffered(),
         \\Args:
         \\  <src>   file to copy
         \\  <dst>   where to put it (optional)

@@ -67,9 +67,6 @@ fn printArgv(argv: []const []const u8) void {
 }
 
 pub fn main(init: std.process.Init) !void {
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = gpa.deinit();
-
     const runs = [_][]const []const u8{
         &.{"basic"},
         &.{ "basic", "greet", "-v", "-p", "9090", "world" },
@@ -82,7 +79,7 @@ pub fn main(init: std.process.Init) !void {
         var err_buf: [256]u8 = undefined;
         var err_w = std.Io.Writer.fixed(&err_buf);
 
-        const code = try App.run(gpa.allocator(), init.io, argv, &commands, &out_w, &err_w);
+        const code = try App.run(init.gpa, init.io, argv, &commands, &out_w, &err_w);
 
         printArgv(argv);
         std.debug.print("{s}", .{out_w.buffered()});
