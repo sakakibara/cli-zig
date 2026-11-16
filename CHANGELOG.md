@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-16
+
+### Changed
+
+- The library and its build script no longer use standard-library names
+  that Zig 0.17.0 marks deprecated, such as the `.Debug` optimize mode, so
+  a build that rejects deprecated names accepts cli-zig. Behavior and API
+  are unchanged.
+
 ## [0.4.0] - 2026-10-25
 
 ### Changed
@@ -193,7 +202,8 @@ dispatcher, spec-driven shell completion, and a JSON schema.
   parent command with subcommands, shell completion with a dynamic resolver,
   and `__schema` emission.
 
-[Unreleased]: https://github.com/sakakibara/cli-zig/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/sakakibara/cli-zig/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/sakakibara/cli-zig/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/sakakibara/cli-zig/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/sakakibara/cli-zig/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/sakakibara/cli-zig/compare/v0.2.0...v0.3.0
